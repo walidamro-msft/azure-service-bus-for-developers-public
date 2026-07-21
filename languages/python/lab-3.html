@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 3: Session-Ordered Fulfilment - Python Labs</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="python">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../python.html">Python labs</a><span class="sep">/</span><span>Lab 3</span></nav>
+    <header class="hero"><h1>Lab 3 - Preserve each order's event sequence</h1><p class="subtitle">Provision a session-enabled queue, send interleaved workflows, and process each order in FIFO order.</p><div class="badge-row"><span class="badge">60 minutes</span><span class="badge">Two Python apps</span><span class="badge">Sessions</span></div></header>
+    <div class="layout">
+      <main class="content">
+        <section id="case-study" class="section-card reveal">
+          <h2>Case study: ordered fulfilment workflows</h2>
+          <p>Payment, allocation, and dispatch events for many orders may share one queue. Events from different orders can run concurrently, but no order may dispatch before its own payment and allocation steps. A Service Bus session groups each order's messages under its order ID.</p>
+<pre class="mermaid">flowchart LR
+  S[Workflow producer] -- SessionId = order ID --&gt; Q[order-sessions queue]
+  Q -- one locked session --&gt; W1[Worker]
+  Q -- another locked session --&gt; W2[Worker]</pre>
+        </section>
+
+        <section id="provision" class="section-card reveal">
+          <h2>1. Provision a session-enabled queue</h2>
+          <p>Reuse the namespace from Lab 1. Session support must be enabled when the queue is created and cannot be enabled after creation.</p>
+          <h3>Option A: Azure portal</h3>
+          <ol>
+            <li>In the Azure portal, open the Service Bus namespace you created in Lab 1.</li>
+            <li>Under <strong>Entities</strong>, select <strong>Queues</strong>, then select <strong>+ Queue</strong>.</li>
+            <li>Set the queue name to <code>order-sessions</code>, enable <strong>Sessions</strong>, and set <strong>Max delivery count</strong> to <code>5</code>.</li>
+            <li>Keep the other defaults and select <strong>Create</strong>. Confirm the queue shows sessions as enabled before continuing.</li>
+          </ol>
+          <div class="callout"><strong>Important:</strong> Sessions cannot be enabled after a queue is created. If you create the queue without sessions, delete it and create it again with <strong>Sessions</strong> enabled.</div>
+          <h3>Option B: Azure CLI</h3>
+<pre class="code" data-lang="powershell">az servicebus queue create --resource-group $resourceGroup --namespace-name $namespace --name order-sessions --enable-session true --max-delivery-count 5
+$env:SERVICEBUS_FQNS = "$namespace.servicebus.windows.net"</pre>
+          <div class="callout"><strong>Note:</strong> Complete either Option A or Option B, not both. Reuse the <code>SERVICEBUS_FQNS</code> value from Lab 1.</div>
+        </section>
+
+        <section id="projects" class="section-card reveal">
+          <h2>2. Create producer and processor applications</h2>
+<pre class="code" data-lang="powershell">mkdir lab3-sessions
+cd lab3-sessions
+py -3.10 -m venv .venv
+Set-ExecutionPolicy -Scope Process Bypass
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install azure-servicebus azure-identity
+New-Item producer.py, processor.py -ItemType File</pre>
+        </section>
+
+        <section id="producer" class="section-card reveal">
+          <h2>3. Send two interleaved order workflows</h2>
+          <p>Replace <code>producer.py</code> with:</p>
+<pre class="code" data-lang="python">import os
+
+from azure.identity import DefaultAzureCredential
+from azure.servicebus import ServiceBusClient, ServiceBusMessage
+
+fully_qualified_namespace = os.environ["SERVICEBUS_FQNS"]
+order_ids = ["ORD-101", "ORD-202"]
+states = ["PaymentAccepted", "StockAllocated", "Dispatched"]
+
+with ServiceBusClient(fully_qualified_namespace, DefaultAzureCredential()) as client:
+    with client.get_queue_sender(queue_name="order-sessions") as sender:
+        for state in states:
+            for order_id in order_ids:
+                sender.send_messages(ServiceBusMessage(
+                    state,
+                    session_id=order_id,
+                    message_id=f"{order_id}-{state}",
+                    subject=state,
+                ))
+                print(f"Sent {order_id}: {state}")</pre>
+        </section>
+
+        <section id="processor" class="section-card reveal">
+          <h2>4. Process one available session at a time</h2>
+          <p>Replace <code>processor.py</code> with:</p>
+<pre class="code" data-lang="python">import os
+import time
+
+from azure.identity import DefaultAzureCredential
+from azure.servicebus import NEXT_AVAILABLE_SESSION, ServiceBusClient
+from azure.servicebus.exceptions import OperationTimeoutError
+
+fully_qualified_namespace = os.environ["SERVICEBUS_FQNS"]
+
+with ServiceBusClient(fully_qualified_namespace, DefaultAzureCredential()) as client:
+    while True:
+        try:
+            with client.get_queue_receiver(
+                queue_name="order-sessions",
+                session_id=NEXT_AVAILABLE_SESSION,
+                max_wait_time=5,
+            ) as receiver:
+                session_id = receiver.session.session_id
+                print(f"Accepted session {session_id}")
+                for message in receiver:
+                    print(f"{message.session_id}: {str(message)}")
+                    time.sleep(0.3)
+                    receiver.complete_message(message)
+        except OperationTimeoutError:
+            print("No unlocked sessions remain.")
+            break</pre>
+          <div class="callout"><strong>Concurrency:</strong> Run a second <code>processor.py</code> process to accept another unlocked session. A session lock gives one receiver exclusive access to that order while preserving FIFO delivery within the session.</div>
+        </section>
+
+        <section id="run" class="section-card reveal">
+          <h2>5. Run and verify ordering</h2>
+<pre class="code" data-lang="powershell"># Terminal 1
+.\.venv\Scripts\Activate.ps1
+$env:SERVICEBUS_FQNS = "&lt;namespace&gt;.servicebus.windows.net"
+python processor.py
+
+# Terminal 2
+.\.venv\Scripts\Activate.ps1
+$env:SERVICEBUS_FQNS = "&lt;namespace&gt;.servicebus.windows.net"
+python producer.py</pre>
+          <p><strong>Expected result:</strong> Output for <code>ORD-101</code> and <code>ORD-202</code> may be handled by separate processor runs, but each order always prints PaymentAccepted, StockAllocated, then Dispatched. The queue returns to zero active messages.</p>
+          <p><strong>Challenge:</strong> Add a third order and start two processor instances after sending. Compare throughput without changing per-order ordering.</p>
+        </section>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-2.html"><small>Previous</small><strong>&lt;- Lab 2</strong></a><a class="next" href="lab-4.html"><small>Next</small><strong>Lab 4 -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#projects">2. Create apps</a><a href="#producer">3. Producer</a><a href="#processor">4. Processor</a><a href="#run">5. Run and verify</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

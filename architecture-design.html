@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Module 2: Azure Messaging Architecture Design</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("sb-runtime-theme");
+      document.documentElement.setAttribute("data-theme", (t === "light" || t === "dark") ? t : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="assets/site.css" />
+</head>
+<body data-root="." data-active="architecture">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><span>Architecture Design</span></nav>
+    <header class="hero">
+      <h1>Azure Messaging Architecture Design</h1>
+      <p class="subtitle">Choose the messaging model from the workload semantics first, then validate payload size, delivery, scale, protocol, networking, and operational requirements.</p>
+      <div class="badge-row"><span class="badge">Architecture</span><span class="badge">~35 min</span><span class="badge">Module 2 of 11</span></div>
+    </header>
+
+    <div class="layout">
+      <main class="content">
+        <section id="messages-events-streams" class="section-card reveal">
+          <h2>Start with the communication contract</h2>
+          <p>The most important design decision is what the producer means by sending data. Do not select a service from throughput alone.</p>
+          <div class="table-wrap">
+            <table aria-label="Message, event, stream, and socket communication contracts">
+              <thead><tr><th>Contract</th><th>Producer intent</th><th>Consumer behavior</th><th>Typical Azure choice</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Command or message</strong></td><td>Requests work and expects controlled processing.</td><td>Completes, abandons, defers, or dead-letters an individual item.</td><td>Service Bus</td></tr>
+                <tr><td><strong>Discrete event</strong></td><td>Announces that a fact occurred without directing a specific action.</td><td>Reacts independently through push delivery and filtering.</td><td>Event Grid</td></tr>
+                <tr><td><strong>Event stream</strong></td><td>Appends telemetry or a sequence of observations.</td><td>Reads an ordered partition using its own cursor and can replay retained data.</td><td>Event Hubs</td></tr>
+                <tr><td><strong>Simple task</strong></td><td>Adds inexpensive background work with minimal broker semantics.</td><td>Polls, processes, and deletes a small message.</td><td>Queue Storage</td></tr>
+                <tr><td><strong>Live connection</strong></td><td>Needs bidirectional request/response traffic rather than buffered messaging.</td><td>Maintains a relayed socket to a service behind a firewall.</td><td>Relay</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout"><strong>Important:</strong> At-least-once delivery can produce duplicates. Design consumers to be idempotent even when the selected service offers duplicate detection.</div>
+        </section>
+
+        <section id="technology-guides" class="section-card reveal">
+          <h2>Architecture guide for each technology</h2>
+          <div class="service-grid">
+            <article class="service-guide">
+              <img src="images/azure/10836-icon-service-Azure-Service-Bus.svg" alt="Azure Service Bus" loading="lazy" decoding="async" />
+              <div><h3>Azure Service Bus</h3><p><strong>Choose for:</strong> enterprise commands and business messages that need queues or topics, settlement, transactions, sessions, dead-lettering, scheduling, deferral, duplicate detection, TTL, or JMS/AMQP interoperability.</p><p><strong>Architecture watch:</strong> model entity boundaries, payload and property size, lock duration, retry ownership, ordering keys, duplicate windows, DLQ recovery, tier and protocol limits, and peak broker load.</p></div>
+            </article>
+            <article class="service-guide">
+              <img src="images/azure/10215-icon-service-Event-Grid-Domains.svg" alt="Azure Event Grid" loading="lazy" decoding="async" />
+              <div><h3>Azure Event Grid</h3><p><strong>Choose for:</strong> reactive integration where Azure resources or custom publishers announce discrete facts to one or many push-based handlers.</p><p><strong>Architecture watch:</strong> CloudEvents schemas, event size and 64-KB billing increments for Basic custom and domain topics, subject and event-type filters, endpoint validation, retry and expiration policy, dead-letter storage, handler idempotency, and no global ordering assumption.</p></div>
+            </article>
+            <article class="service-guide">
+              <img src="images/azure/00039-icon-service-Event-Hubs.svg" alt="Azure Event Hubs" loading="lazy" decoding="async" />
+              <div><h3>Azure Event Hubs</h3><p><strong>Choose for:</strong> high-volume telemetry, logs, clickstreams, or change feeds consumed as a partitioned, replayable stream through AMQP or Kafka-compatible clients.</p><p><strong>Architecture watch:</strong> publication size, partition keys and count, consumer groups, checkpoints, retention, throughput capacity, Capture to storage, and downstream stream processing.</p></div>
+            </article>
+            <article class="service-guide">
+              <img src="images/azure/10840-icon-service-Storage-Queue.svg" alt="Azure Queue Storage" loading="lazy" decoding="async" />
+              <div><h3>Azure Queue Storage</h3><p><strong>Choose for:</strong> low-cost, very large task backlogs when polling and basic visibility-timeout processing are enough.</p><p><strong>Architecture watch:</strong> 64 KiB message limits, poison-message handling in the application, visibility renewal, dequeue counts, payload references, and the absence of topics, transactions, sessions, and broker-managed DLQs.</p></div>
+            </article>
+            <article class="service-guide">
+              <img src="images/azure/03656-icon-service-Hybrid-Connectivity-Hub.svg" alt="Azure Relay and hybrid connectivity" loading="lazy" decoding="async" />
+              <div><h3>Azure Relay and Hybrid Connections</h3><p><strong>Choose for:</strong> securely exposing an on-premises service through outbound connections when VPN or virtual network integration is impractical.</p><p><strong>Architecture watch:</strong> this is live relayed connectivity, not durable messaging. Plan authentication, connection lifetime, load distribution, latency, and behavior when either endpoint disconnects.</p></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="payload-size" class="section-card reveal">
+          <h2>Payload size can change the service or tier</h2>
+          <p>Measure the serialized body together with its envelope and properties, and test representative peak-size data. A payload that fits one tier or protocol can be rejected by another, while larger events consume more throughput and can increase cost.</p>
+          <div class="table-wrap">
+            <table aria-label="Azure messaging payload size comparison">
+              <thead><tr><th>Technology</th><th>Current size limit</th><th>Selection consequence</th></tr></thead>
+              <tbody>
+                <tr><td>Service Bus</td><td>256 KB in Basic and Standard. Premium defaults to 1 MB per entity and can be configured up to 100 MB for a single AMQP message; HTTP and batches remain limited to 1 MB.</td><td>Payloads above 256 KB require Premium with the correct entity setting and protocol, or a claim-check design. Include system and user properties in the size budget.</td></tr>
+                <tr><td>Event Grid</td><td>1 MB per event; the limit cannot be increased. Event Grid namespace batches are also limited to 1 MB.</td><td>Use events as compact fact notifications. For Basic custom and domain topics, events are metered in 64-KB increments, so payload growth also affects cost and throughput.</td></tr>
+                <tr><td>Event Hubs</td><td>Maximum publication size is 256 KB in Basic, 1 MB in Standard and Premium, and 20 MB in Dedicated. The limit applies to either one event or the entire batch.</td><td>Choose a tier that fits the encoded publication and throughput profile. Do not assume batching permits a larger total publication.</td></tr>
+                <tr><td>Queue Storage</td><td>64 KiB per message.</td><td>Suitable only when the task body or a reference to it fits this limit; encoding can increase the transmitted size.</td></tr>
+                <tr><td>Relay</td><td>Relay is live connectivity rather than a durable message store; limits vary by Relay offering and transport.</td><td>Select Relay for the connectivity contract, then validate request and transport limits separately. It is not a workaround for oversized durable messages.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout"><strong>For oversized payloads:</strong> Apply the claim-check pattern: store the body in Blob Storage and send a small message or event containing an immutable reference, content type, length, checksum, correlation ID, and expiry information. Protect the blob with managed identity and least-privilege RBAC, align its retention with message retries and DLQ recovery, and delete it only after processing is safely complete.</div>
+        </section>
+
+        <section id="service-bus-checklist" class="section-card reveal">
+          <h2>Service Bus architecture checklist</h2>
+          <p>The slide deck provides a broad feature inventory. Turn that inventory into explicit design decisions before implementation.</p>
+          <div class="table-wrap">
+            <table aria-label="Service Bus architecture checklist">
+              <thead><tr><th>Decision area</th><th>Questions to resolve</th></tr></thead>
+              <tbody>
+                <tr><td>Topology</td><td>Queue or topic? How many subscriptions? Which filters and actions? Is auto-forwarding creating an intentional processing pipeline?</td></tr>
+                <tr><td>Delivery and ordering</td><td>Can consumers tolerate duplicates? Is strict per-key ordering required? If so, define session IDs, session state, and concurrency.</td></tr>
+                <tr><td>Temporal control</td><td>Set message TTL, lock duration, retry policy, scheduled enqueue behavior, and deferral retrieval strategy.</td></tr>
+                <tr><td>Failure handling</td><td>Define max delivery count, DLQ alerts, poison-message ownership, inspection, repair, replay, and audit requirements.</td></tr>
+                <tr><td>Atomicity and size</td><td>Are transactions required? What are the average, 95th-percentile, and maximum serialized sizes including properties? Can batching improve efficiency without exceeding its 1-MB limit? Use Premium large-message support only when justified; otherwise use claim check.</td></tr>
+                <tr><td>Capacity and tier</td><td>Estimate ingress, egress, concurrent connections, entity count, and burst behavior. Decide whether partitioning or Premium messaging units and dedicated isolation are required.</td></tr>
+                <tr><td>Protocol and clients</td><td>Use AMQP SDKs by default. Confirm JMS version and feature support against the selected tier; use HTTP only where its tradeoffs are understood.</td></tr>
+                <tr><td>Security and network</td><td>Prefer managed identity and least-privilege data-plane RBAC. Decide on private endpoints, firewall rules, key rotation, and diagnostic retention.</td></tr>
+                <tr><td>Availability and regions</td><td>Use availability-zone support where offered. Distinguish namespace metadata disaster recovery from geo-replication of message data, then document failover and producer/consumer recovery.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="processing-strategies" class="section-card reveal">
+          <h2>Queue and topic processing strategies</h2>
+          <p>Producer count, receiver count, and subscription count solve different architecture problems. Decide who owns the message contract, whether each downstream capability needs its own copy, and where processing can safely run in parallel.</p>
+
+          <h3>Single or multiple producers</h3>
+          <div class="table-wrap">
+            <table aria-label="Service Bus producer strategies">
+              <thead><tr><th>Pattern</th><th>Choose it when</th><th>Design implications</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Single producer</strong></td><td>One application owns the command or event contract and its publishing lifecycle.</td><td>Contract governance, authorization, tracing, and capacity attribution are simpler. The producer can still run as several scaled instances.</td></tr>
+                <tr><td><strong>Multiple producers, shared entity</strong></td><td>Several applications publish the same business contract to the same queue or topic.</td><td>Use a shared schema, stable message identity, correlation metadata, idempotent retry behavior, and least-privilege send access. There is no global ordering guarantee across concurrent producers.</td></tr>
+                <tr><td><strong>Separate entities per producer or contract</strong></td><td>Workloads have different owners, schemas, security boundaries, retention, scaling, or failure-isolation requirements.</td><td>Avoid creating an entity for every producer by default. Separate entities only when the operational boundary is real, then route or aggregate downstream deliberately.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout"><strong>Ordering note:</strong> Sessions preserve ordered handling within a session after Service Bus accepts the messages. They do not establish the intended business order when multiple producers race to send for the same session. If that order matters, coordinate sequencing at the producer or workflow boundary.</div>
+
+          <h3>Single receiver or competing receivers</h3>
+          <div class="table-wrap">
+            <table aria-label="Service Bus receiver and subscription processing strategies">
+              <thead><tr><th>Pattern</th><th>Delivery behavior</th><th>Choose it when</th></tr></thead>
+              <tbody>
+                <tr><td><strong>One receiver on a queue</strong></td><td>One process handles available messages, although it can still use internal concurrency.</td><td>Processing volume is modest or the handler must be deliberately constrained. A single receiver alone is not a complete ordering guarantee because retries, abandonment, deferral, and lock loss can change observed order.</td></tr>
+                <tr><td><strong>Multiple receivers on one queue</strong></td><td>Receivers compete for messages. Each message is locked by one receiver at a time, so work is distributed rather than copied.</td><td>You need horizontal scale or availability. Make handlers idempotent, tune concurrency and prefetch, renew locks for long work, and scale from queue depth, message age, processing latency, and failure rate.</td></tr>
+                <tr><td><strong>Multiple topic subscriptions</strong></td><td>Each matching subscription receives its own copy and maintains independent delivery, retry, and dead-letter state.</td><td>Different business capabilities must process the same event independently. Give each capability its own subscription, filters, permissions, scaling policy, and DLQ ownership.</td></tr>
+                <tr><td><strong>Multiple processors on one subscription</strong></td><td>Processor instances compete for that subscription's messages; they do not each receive a copy.</td><td>One subscriber capability needs more throughput or resilience. Scale and monitor it like a queue, independently from processors attached to other subscriptions.</td></tr>
+                <tr><td><strong>Session-aware processors</strong></td><td>One receiver owns the lock for a session at a time, preserving ordered handling for that session while other receivers process different sessions concurrently.</td><td>You need per-customer, per-order, or per-aggregate ordering without reducing the entire entity to one serial processing lane. Choose a session key with enough cardinality to distribute load.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Pattern matrix</h3>
+          <p>This matrix lists the meaningful topology combinations. "Multiple" means independently deployed applications, scaled instances, or both.</p>
+          <div class="table-wrap">
+            <table aria-label="Service Bus producer, receiver, subscription, and processor pattern matrix">
+              <thead><tr><th>Entity</th><th>Producers or publishers</th><th>Subscriptions</th><th>Receivers or processors per path</th><th>Result and typical use</th></tr></thead>
+              <tbody>
+                <tr><td>Queue</td><td>One</td><td>N/A</td><td>One</td><td>One contract owner and one processing lane. Choose for modest volume or deliberately constrained handling.</td></tr>
+                <tr><td>Queue</td><td>One</td><td>N/A</td><td>Multiple</td><td>One producer workload distributed across competing receivers for throughput and availability.</td></tr>
+                <tr><td>Queue</td><td>Multiple</td><td>N/A</td><td>One</td><td>Several producers feed one serialized processing lane. The receiver can become a bottleneck, and producer send order is not a business ordering guarantee.</td></tr>
+                <tr><td>Queue</td><td>Multiple</td><td>N/A</td><td>Multiple</td><td>Fan-in with competing consumers. Choose for shared contracts and scalable work distribution.</td></tr>
+                <tr><td>Topic</td><td>One</td><td>One</td><td>One</td><td>One publisher and one subscriber capability. Useful when future fan-out is expected or topic filtering is still valuable.</td></tr>
+                <tr><td>Topic</td><td>Multiple</td><td>One</td><td>One or multiple</td><td>Several publishers share one event contract; one subscriber capability processes the matching stream and can scale with competing processors.</td></tr>
+                <tr><td>Topic</td><td>One</td><td>Multiple</td><td>One or multiple per subscription</td><td>Classic fan-out. Every matching subscription gets a copy, and each subscriber scales independently.</td></tr>
+                <tr><td>Topic</td><td>Multiple</td><td>Multiple</td><td>One or multiple per subscription</td><td>Shared event backbone with fan-in and fan-out. Use strong contract governance, filters, ownership, capacity planning, and per-subscription DLQ operations.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout"><strong>Sessions are an ordering overlay:</strong> Apply sessions to any queue or subscription row when messages require ordered, exclusive processing per key. Multiple session-aware processors can still run concurrently by owning different sessions.</div>
+
+          <div class="diagram-wrap">
+            <pre class="mermaid">
+flowchart LR
+    P1[Producer A] --> Q[(Queue)]
+    P2[Producer B] --> Q
+    Q -->|compete| R1[Receiver instance 1]
+    Q -->|compete| R2[Receiver instance 2]
+
+    P3[Publisher] --> T[(Topic)]
+    T --> S1[(Inventory subscription)]
+    T --> S2[(Billing subscription)]
+    S1 -->|compete| I1[Inventory processor 1]
+    S1 -->|compete| I2[Inventory processor 2]
+    S2 --> B1[Billing processor]
+            </pre>
+          </div>
+          <div class="callout"><strong>How to choose:</strong> Add receiver instances to increase throughput for one workload. Add subscriptions when separate workloads each need a copy. Do not add subscriptions merely to scale one consumer group.</div>
+        </section>
+
+        <section id="scaling-service-bus" class="section-card reveal">
+          <h2>Scale the Service Bus workload</h2>
+          <p>Scaling Service Bus requires coordinated decisions at the namespace, messaging topology, and application layers. More broker capacity cannot fix a slow handler, and more processors cannot remove namespace throttling.</p>
+
+          <div class="table-wrap">
+            <table aria-label="Azure Service Bus scaling layers">
+              <thead><tr><th>Scaling layer</th><th>Primary controls</th><th>Use when</th><th>Watch for</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Namespace capacity</strong></td><td>Premium messaging units (MUs), configured manually or with Azure Monitor autoscale</td><td>Namespace CPU or memory is sustained at a high level, requests are throttled, or predictable latency requires isolated capacity.</td><td>Premium supports 1, 2, 4, 8, or 16 MUs. Scaling is not instantaneous, throughput might not increase linearly, and all entities share the namespace capacity.</td></tr>
+                <tr><td><strong>Messaging topology</strong></td><td>Partitioned Premium namespaces, entity design, subscription filters, and separate Premium namespaces where justified</td><td>A single capacity pool or topology has reached a practical limit, or workloads need independent isolation and ownership.</td><td>Sessions, fan-out, filters, scheduling, transactions, duplicate detection, and forwarding consume broker compute. More entities alone do not guarantee more throughput.</td></tr>
+                <tr><td><strong>Processor instances</strong></td><td>Scale out competing receivers for each queue or subscription</td><td>Backlog or message age grows while namespace capacity remains healthy and handlers have available downstream capacity.</td><td>Idempotency, lock renewal, downstream rate limits, hot session keys, deployment churn, and uneven work distribution.</td></tr>
+                <tr><td><strong>Processor concurrency</strong></td><td>Concurrent handler count, prefetch, asynchronous operations, batching, and long-lived AMQP clients</td><td>Each application instance has spare CPU, memory, and downstream capacity but is not consuming messages fast enough.</td><td>Excess concurrency can overload dependencies. Excess prefetch can hold locked messages longer than the handler can safely process them.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Manual scale and custom autoscale</h3>
+          <p>Messaging units apply to the entire Premium namespace. In the Azure portal, open the namespace and select <strong>Scale</strong>. Use <strong>Manual scale</strong> for fixed or carefully controlled capacity, or <strong>Custom autoscale</strong> to set minimum, maximum, and default MUs with metric-based and scheduled conditions.</p>
+          <ul>
+            <li>Define scale-out rules for both CPU and memory. A practical starting point is to add capacity before CPU remains above approximately 70-75%, and Microsoft recommends scaling up at 60% memory because cached messages can make memory rise quickly.</li>
+            <li>Use a lower scale-in threshold than the scale-out threshold to prevent oscillation. For example, a 75-80% scale-out threshold can be paired with a scale-in threshold below 40%.</li>
+            <li>Use a short evaluation window for scale-out and a longer cooldown for scale-in. Microsoft recommends a scale-in cooldown longer than 30 minutes for spiky workloads.</li>
+            <li>Pre-scale for known peaks with an additional scheduled condition. Autoscale metrics can be 5-10 minutes old, so reactive rules alone might not absorb a sudden burst.</li>
+            <li>Review <strong>Run history</strong> and configure notifications so operators can see failed, delayed, or unexpected scaling actions.</li>
+          </ul>
+          <div class="callout"><strong>Important:</strong> Service Bus autoscale changes Premium messaging units; it does not create more application processors. Configure your compute platform to scale queue and subscription processors separately, using backlog and processing health signals.</div>
+
+          <h3>Pricing implications</h3>
+          <p>Premium capacity is billed by messaging unit and hour. Scaling from 2 to 4 MUs increases the namespace capacity charge for the hours in which the additional MUs are allocated. Use the current regional price from the Azure pricing page or pricing calculator rather than treating an example rate as permanent.</p>
+          <div class="callout"><strong>Single-region capacity cost:</strong><br /><code>cost = configured MUs x billable hours x regional hourly MU rate</code></div>
+          <p>Geo-Replication provisions every replica with the same MU count as the primary. A primary with 4 MUs and one secondary therefore runs 4 MUs in each region, for 8 MUs of billed capacity. Only the primary accepts normal client traffic, but the hot-standby capacity in the secondary is still provisioned and billed.</p>
+          <div class="callout"><strong>Geo-Replication cost:</strong><br /><code>total cost = sum of (MUs x hours x regional MU rate) for every replica + (replicated GB x data-transfer rate)</code></div>
+          <div class="table-wrap">
+            <table aria-label="Service Bus Premium and Geo-Replication pricing examples">
+              <thead><tr><th>Configuration</th><th>Billed capacity</th><th>Equation</th></tr></thead>
+              <tbody>
+                <tr><td>4 MUs, one region</td><td>4 MUs</td><td><code>4 x hours x regional MU rate</code></td></tr>
+                <tr><td>4 MUs, primary plus one secondary</td><td>8 MUs total: 4 per region</td><td><code>(4 x hours x primary-region rate) + (4 x hours x secondary-region rate) + replication transfer</code></td></tr>
+                <tr><td>Autoscale from 4 to 8 MUs with one secondary</td><td>16 MUs total while scaled out: 8 per region</td><td><code>(8 x hours x rate for each of 2 replicas) + replication transfer</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>If all replicas use the same hourly MU rate, the capacity portion can be simplified to <code>replica count x configured MUs x hours x hourly MU rate</code>. Replicated-data transfer is charged separately according to the zone containing the primary region at the time of replication. Promotion swaps primary and secondary roles; it does not reduce the replica count or capacity charge. Removing the secondary removes its future replica capacity and replication-transfer charges.</p>
+
+          <h3>Measure before and after scaling</h3>
+          <div class="table-wrap">
+            <table aria-label="Service Bus scaling signals and responses">
+              <thead><tr><th>Signal</th><th>Likely constraint</th><th>Response to test</th></tr></thead>
+              <tbody>
+                <tr><td>High namespace CPU or memory, throttled requests, or rising server latency</td><td>Broker capacity</td><td>Increase Premium MUs or adjust autoscale, then repeat the same representative load test.</td></tr>
+                <tr><td>Growing active-message backlog while namespace CPU and memory remain healthy</td><td>Consumer capacity or a slow downstream dependency</td><td>Inspect handler latency and errors, then increase processor instances or concurrency only if downstream systems can absorb the load.</td></tr>
+                <tr><td>One session grows while other receivers are idle</td><td>Hot session key</td><td>Redesign the session key or workload boundary. More receivers cannot process one session concurrently.</td></tr>
+                <tr><td>Lock loss or repeated redelivery after increasing concurrency or prefetch</td><td>Too much work reserved per processor</td><td>Reduce prefetch or concurrency, shorten handler work, and confirm lock renewal and settlement behavior.</td></tr>
+                <tr><td>Throughput stops improving as MUs increase</td><td>Entity, storage, network, client, or downstream bottleneck</td><td>Profile end to end. Consider a partitioned Premium namespace or sharding independent workloads across Premium namespaces only after measurement confirms the boundary.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Benchmark with representative message sizes, subscription fan-out, filters, sessions, transactions, retries, and settlement behavior. A simple benchmark without these features is useful as a baseline, not as a production capacity promise.</p>
+        </section>
+
+        <section id="partitioning-vs-mus" class="section-card reveal">
+          <h2>Partitioning and messaging units solve different problems</h2>
+          <p>Partitioning changes the namespace's broker and storage topology. Messaging units change how much dedicated compute and memory a Premium namespace receives. They work together, but increasing one is not equivalent to increasing the other.</p>
+
+          <div class="table-wrap">
+            <table aria-label="Azure Service Bus partitioning and messaging units comparison">
+              <thead><tr><th>Architecture concern</th><th>Partitioning</th><th>Messaging units</th></tr></thead>
+              <tbody>
+                <tr><td><strong>What it provides</strong></td><td>Independent message brokers and stores that distribute queues, topics, and message traffic.</td><td>Dedicated Premium compute, memory, connection capacity, throughput capacity, and namespace storage quota.</td></tr>
+                <tr><td><strong>Primary reason to use it</strong></td><td>Remove a single broker or store as the topology boundary and distribute a workload across multiple partitions.</td><td>Respond to high namespace CPU or memory, throttling, connection pressure, or latency requirements.</td></tr>
+                <tr><td><strong>Premium configuration</strong></td><td>Choose 1, 2, or 4 namespace partitions when the namespace is created. Every entity in a partitioned Premium namespace is partitioned.</td><td>Choose 1, 2, 4, 8, or 16 MUs. Scale manually or with Azure Monitor autoscale after namespace creation.</td></tr>
+                <tr><td><strong>Relationship</strong></td><td>The partition count determines how many broker-and-store shards receive capacity.</td><td>The MU count must be a multiple of the partition count and is divided evenly among the partitions.</td></tr>
+                <tr><td><strong>Change later?</strong></td><td>No. Premium partitioning and its partition count are creation-time decisions.</td><td>Yes. MUs can scale up or down within the supported values.</td></tr>
+                <tr><td><strong>Cost effect</strong></td><td>Partitions are not a separate billing meter, but more partitions require a compatible minimum MU count. Four partitions therefore require at least four MUs.</td><td>Premium capacity is billed by provisioned MU and hour, including capacity provisioned for Geo-Replication replicas.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>How Premium distributes MUs</h3>
+          <div class="table-wrap">
+            <table aria-label="Premium messaging unit distribution examples">
+              <thead><tr><th>Namespace configuration</th><th>Capacity per partition</th><th>Architecture interpretation</th></tr></thead>
+              <tbody>
+                <tr><td>1 partition, 4 MUs</td><td>4 MUs on one partition</td><td>More compute behind one broker-and-store topology boundary.</td></tr>
+                <tr><td>2 partitions, 4 MUs</td><td>2 MUs per partition</td><td>Compute and message traffic can be distributed across two boundaries.</td></tr>
+                <tr><td>4 partitions, 4 MUs</td><td>1 MU per partition</td><td>The minimum four-partition configuration favors distribution over compute concentration.</td></tr>
+                <tr><td>4 partitions, 8 MUs</td><td>2 MUs per partition</td><td>Distribution across four boundaries with additional compute assigned to each.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout"><strong>Hot-key constraint:</strong> <code>SessionId</code>, an explicit <code>PartitionKey</code>, and other consistency features can pin related messages to one partition. Adding total namespace MUs does not spread one hot key across partitions. Choose keys with enough cardinality, measure distribution, and add MUs only when the partition receiving that traffic also needs more compute.</div>
+
+          <h3>How to choose</h3>
+          <ul>
+            <li><strong>Add MUs</strong> when Premium namespace CPU or memory is high, requests are throttled, or measured broker capacity is the limiting factor.</li>
+            <li><strong>Choose multiple partitions</strong> when the design needs broker-and-store distribution, aggregate scale beyond one partition, or better workload spread. Decide this before namespace creation.</li>
+            <li><strong>Use both</strong> for large Premium workloads that need distribution and more compute per partition. Benchmark the intended partition count, MU count, keys, sessions, filters, and fan-out together.</li>
+            <li><strong>Scale processors separately</strong> when backlog grows while namespace health remains good. Neither partitions nor MUs create more application receivers.</li>
+          </ul>
+
+          <div class="callout"><strong>Standard-tier distinction:</strong> Standard uses entity-level partitioning selected when each queue or topic is created. Enabling it creates 16 partitions for that entity, but Standard still uses shared service capacity and has no messaging units. Premium uses namespace-level partitioning, so all entities inherit the namespace decision.</div>
+        </section>
+
+        <section id="geo-replication" class="section-card reveal">
+          <h2>Geo-Replication</h2>
+          <p>Geo-Replication is the Service Bus feature for keeping metadata and message data synchronized across regions. Use it when you need the namespace itself to continue in a secondary region with the same queues, topics, subscriptions, filters, and message state after a promotion.</p>
+          <div class="callout"><strong>Important:</strong> Geo-Replication is a Premium-tier feature and it uses a primary-secondary model. You use the namespace hostname in your client code, and Azure routes traffic to the current primary region.</div>
+          <div class="diagram-wrap">
+            <figure class="geo-replication-figure">
+              <img src="images/custom/geo-replication-overview.png" alt="Service Bus Geo-Replication overview showing a primary region replicating to a secondary region" loading="lazy" decoding="async" />
+              <figcaption>Primary and secondary regions replicate namespace data so you can promote a secondary region when needed.</figcaption>
+            </figure>
+          </div>
+          <div class="table-wrap">
+            <table aria-label="Service Bus Geo-Replication summary">
+              <thead><tr><th>Topic</th><th>What to know</th></tr></thead>
+              <tbody>
+                <tr><td>What gets replicated</td><td>Metadata, message data, message state, property changes, queues, topics, subscriptions, filters, and namespace configuration.</td></tr>
+                <tr><td>Replication model</td><td>Choose synchronous replication for the strongest data assurance, or asynchronous replication when lower latency matters more and some lag is acceptable.</td></tr>
+                <tr><td>Capacity and pricing</td><td>Every replica runs with the same Premium MU count as the primary and is billed for that capacity. One primary and one secondary configured for 4 MUs provide 4 MUs per region and incur 8 MUs of capacity charges in total, plus replicated-data transfer charges.</td></tr>
+                <tr><td>Promotion</td><td>You manually promote a secondary region. Planned promotion waits for lag to catch up; forced promotion switches immediately and can lose unreplicated data.</td></tr>
+                <tr><td>Region selection</td><td>Choose a secondary region close to the primary when possible to reduce lag. If you use Geo-Replication for availability, same-continent pairing is usually the safer default.</td></tr>
+                <tr><td>Monitoring</td><td>Watch the replication lag metrics and alert before lag reaches the configured maximum, because the primary starts throttling requests when that limit is hit.</td></tr>
+                <tr><td>Limits and cautions</td><td>Geo-Replication cannot be combined with Geo-Disaster Recovery, supports only a single secondary region, and does not currently support large messages. Verify the current preview and regional limits before you depend on it.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>For architecture work, treat Geo-Replication as a continuity decision rather than a cosmetic setting. It affects failover planning, private endpoints, region choice, promotion runbooks, and the way you test recovery scenarios.</p>
+        </section>
+
+        <section id="comparison" class="section-card reveal">
+          <h2>Technology comparison</h2>
+          <div class="table-wrap">
+            <table aria-label="Azure messaging technology comparison">
+              <thead><tr><th>Technology</th><th>Primary model</th><th>Delivery shape</th><th>Ordering and replay</th><th>Avoid when</th></tr></thead>
+              <tbody>
+                <tr><td>Service Bus</td><td>Brokered messages and pub/sub</td><td>Pull or processor callback with settlement</td><td>Sessions provide ordered groups; messages are removed after settlement</td><td>You need a high-volume retained event log</td></tr>
+                <tr><td>Event Grid</td><td>Discrete event notification</td><td>Push fan-out to handlers</td><td>No ordering guarantee; retries are for delivery, not stream replay</td><td>The publisher needs command completion or transactions</td></tr>
+                <tr><td>Event Hubs</td><td>Partitioned append-only stream</td><td>Consumers read with independent cursors</td><td>Ordered within a partition and replayable during retention</td><td>Each item needs broker settlement, DLQ, or workflow semantics</td></tr>
+                <tr><td>Queue Storage</td><td>Simple work queue</td><td>Polling with visibility timeout</td><td>Best-effort order; no pub/sub replay model</td><td>You need sessions, topics, transactions, or broker-managed DLQ</td></tr>
+                <tr><td>Relay</td><td>Relayed socket or request/response</td><td>Live bidirectional connection</td><td>No durable buffer or replay</td><td>Endpoints must be decoupled in time</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="callout"><strong>Compose when needed:</strong> A solution can use several technologies. For example, Event Grid can notify that a blob arrived, Service Bus can coordinate reliable processing, and Event Hubs can carry operational telemetry. Keep each contract explicit.</p>
+        </section>
+
+        <section id="decision-tree" class="section-card reveal">
+          <h2>Architect decision tree</h2>
+          <p>Start from communication semantics. After reaching a candidate, verify that the maximum serialized payload fits its tier, protocol, and batch limit, then apply cost, throughput, network, regional, and compliance constraints.</p>
+          <div class="diagram-wrap architecture-decision-tree">
+            <pre class="mermaid">
+flowchart TD
+    A{Must data survive while<br/>sender or receiver is offline?}
+    A -->|No| B{Need a live connection to a<br/>service behind a firewall?}
+    B -->|Yes| R["<img src='images/azure/03656-icon-service-Hybrid-Connectivity-Hub.svg' alt='' /> Azure Relay"]
+    B -->|No| X[Use a synchronous API or another connectivity service]
+    A -->|Yes| C{Is this a replayable stream of<br/>telemetry or many observations?}
+    C -->|Yes| EH["<img src='images/azure/00039-icon-service-Event-Hubs.svg' alt='' /> Azure Event Hubs"]
+    C -->|No| D{Is it a fact notification with<br/>push fan-out to handlers?}
+    D -->|Yes| EG["<img src='images/azure/10215-icon-service-Event-Grid-Domains.svg' alt='' /> Azure Event Grid"]
+    D -->|No| E{Need topics, transactions, sessions,<br/>DLQ, scheduling, or JMS?}
+    E -->|Yes| SB["<img src='images/azure/10836-icon-service-Azure-Service-Bus.svg' alt='' /> Azure Service Bus"]
+    E -->|No| F{Is a low-cost polled task queue<br/>with basic semantics enough?}
+    F -->|Yes| SQ["<img src='images/azure/10840-icon-service-Storage-Queue.svg' alt='' /> Azure Queue Storage"]
+    F -->|No| SB
+
+    classDef question fill:#e6f2fb,stroke:#0078d4,color:#10243a,stroke-width:1.5px;
+    classDef result fill:#e7f5e7,stroke:#107c10,color:#12351a,stroke-width:1.5px;
+    classDef other fill:#fff3e3,stroke:#b86100,color:#4a2b00;
+    class A,B,C,D,E,F question;
+    class R,EH,EG,SB,SQ result;
+    class X other;
+            </pre>
+          </div>
+        </section>
+
+        <section id="references" class="section-card reveal">
+          <h2>References</h2>
+          <ul>
+            <li><a href="https://learn.microsoft.com/azure/service-bus-messaging/compare-messaging-services" target="_blank" rel="noopener">Compare Azure messaging services</a></li>
+            <li><a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-azure-and-service-bus-queues-compared-contrasted" target="_blank" rel="noopener">Compare Azure Queue Storage and Service Bus queues</a></li>
+            <li><a href="https://learn.microsoft.com/azure/architecture/patterns/competing-consumers" target="_blank" rel="noopener">Competing Consumers pattern</a></li>
+            <li><a href="https://learn.microsoft.com/azure/architecture/patterns/publisher-subscriber" target="_blank" rel="noopener">Publisher-Subscriber pattern</a></li>
+            <li><a href="https://learn.microsoft.com/azure/architecture/guide/technology-choices/messaging" target="_blank" rel="noopener">Azure Architecture Center messaging technology choices</a></li>
+            <li><a href="https://learn.microsoft.com/azure/service-bus-messaging/automate-update-messaging-units" target="_blank" rel="noopener">Automatically update Premium messaging units</a></li>
+            <li><a href="https://learn.microsoft.com/azure/service-bus-messaging/enable-partitions-premium" target="_blank" rel="noopener">Partitioning in Service Bus Premium namespaces</a></li>
+            <li><a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-performance-improvements" target="_blank" rel="noopener">Service Bus performance best practices</a></li>
+            <li><a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-geo-replication" target="_blank" rel="noopener">Service Bus Geo-Replication</a></li>
+            <li><a href="https://azure.microsoft.com/pricing/details/service-bus/" target="_blank" rel="noopener">Service Bus pricing</a></li>
+            <li><a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-quotas" target="_blank" rel="noopener">Service Bus quotas and limits</a></li>
+            <li><a href="https://learn.microsoft.com/azure/event-grid/quotas-limits" target="_blank" rel="noopener">Event Grid quotas and limits</a></li>
+            <li><a href="https://learn.microsoft.com/azure/event-hubs/event-hubs-quotas" target="_blank" rel="noopener">Event Hubs quotas and limits</a></li>
+            <li><a href="https://learn.microsoft.com/azure/storage/queues/scalability-targets" target="_blank" rel="noopener">Queue Storage scalability and performance targets</a></li>
+          </ul>
+        </section>
+
+        <nav class="pager" aria-label="Workshop pagination">
+          <a class="prev" href="introduction.html"><small>Previous</small><strong>&lt;- Introduction</strong></a>
+          <a class="next" href="skus-and-tiers.html"><small>Next</small><strong>SKUs and Tiers -&gt;</strong></a>
+        </nav>
+      </main>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>On This Page</h3>
+        <a href="#messages-events-streams">Communication contract</a>
+        <a href="#technology-guides">Technology guides</a>
+        <a href="#payload-size">Payload size</a>
+        <a href="#service-bus-checklist">Service Bus checklist</a>
+        <a href="#processing-strategies">Processing strategies</a>
+        <a href="#scaling-service-bus">Scaling Service Bus</a>
+        <a href="#partitioning-vs-mus">Partitioning vs. MUs</a>
+        <a href="#geo-replication">Geo-Replication</a>
+        <a href="#comparison">Technology comparison</a>
+        <a href="#decision-tree">Architect decision tree</a>
+        <a href="#references">References</a>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

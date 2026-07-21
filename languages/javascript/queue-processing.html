@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Working with Queues - JavaScript and TypeScript - Azure Service Bus Workshop</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="queue-javascript">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../../queues.html">Working with Queues</a><span class="sep">/</span><span>JavaScript / TypeScript</span></nav>
+    <header class="hero">
+      <h1>Working with queues in JavaScript / TypeScript</h1>
+      <p class="subtitle">Map Service Bus processing decisions to receiver creation options, callback subscriptions, pull receive methods, settlement calls, sessions, and client lifetimes.</p>
+      <div class="badge-row"><span class="badge">Node.js</span><span class="badge">@azure/service-bus</span><span class="badge">Receiver subscription and pull models</span></div>
+    </header>
+    <div class="layout">
+      <main class="content">
+        <section id="setup" class="section-card reveal">
+          <h2>Package, authentication, and client</h2>
+          <p>Install <code>@azure/service-bus</code> and <code>@azure/identity</code>. Use <code>DefaultAzureCredential</code> locally and managed identity for Azure-hosted workloads. Grant producers <strong>Azure Service Bus Data Sender</strong> and consumers <strong>Azure Service Bus Data Receiver</strong>.</p>
+<pre class="code" data-lang="powershell">npm install @azure/service-bus @azure/identity</pre>
+<pre class="code" data-lang="typescript">import { ServiceBusClient } from "@azure/service-bus";
+import { DefaultAzureCredential } from "@azure/identity";
+
+const fqns = process.env.SERVICEBUS_FQNS;
+if (!fqns) throw new Error("Set SERVICEBUS_FQNS.");
+
+const client = new ServiceBusClient(fqns, new DefaultAzureCredential());</pre>
+          <div class="callout"><strong>Production identity:</strong> the same code can select a workload or managed identity in Azure. Do not embed connection strings or access keys.</div>
+        </section>
+
+        <section id="send" class="section-card reveal">
+          <h2>Send to a queue</h2>
+<pre class="code" data-lang="typescript">const sender = client.createSender("orders-processing");
+
+await sender.sendMessages({
+  body: { orderId: "ORD-123", status: "created" },
+  messageId: crypto.randomUUID(),
+  correlationId: "order:ORD-123",
+  subject: "OrderCreated.v1",
+  contentType: "application/json",
+  applicationProperties: { schemaVersion: 1 },
+  timeToLive: 30 * 60 * 1000
+});</pre>
+          <p><code>timeToLive</code> is milliseconds. Reuse the sender and close it during shutdown. <code>createMessageBatch</code> and <code>tryAddMessage</code> provide size-aware batching.</p>
+        </section>
+
+        <section id="message-fields" class="section-card reveal">
+          <h2>JavaScript / TypeScript message objects and fields</h2>
+          <div class="property-reference" aria-label="JavaScript and TypeScript Service Bus message field mapping">
+            <article class="property-entry"><div class="property-entry-header"><h4><code>body</code></h4><div><span>Type</span><code>any</code></div><div><span>Interface</span><code>ServiceBusMessage</code></div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>The SDK encodes the supplied value as the AMQP message body.</p></div><div><h5>Use</h5><p>Use an explicit serializable contract and <code>contentType</code>. Validate received data before treating it as a TypeScript type.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>messageId</code></h4><div><span>Type</span><code>string | number | Buffer</code></div><div><span>Service limit</span>128 characters when represented as text</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>The logical message identity and duplicate-detection key.</p></div><div><h5>Use</h5><p>Prefer a persisted UUID string for portability. Reuse it only for retries of the same logical message.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>correlationId</code> and <code>subject</code></h4><div><span>Types</span>Identifier, <code>string</code></div><div><span>Purpose</span>Workflow and contract</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>Correlation connects related operations; subject identifies the business message type.</p></div><div><h5>Use</h5><p>Use portable strings such as <code>order:ORD-123</code> and <code>OrderCreated.v1</code>.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>contentType</code> and <code>applicationProperties</code></h4><div><span>Types</span><code>string</code>, record</div><div><span>Purpose</span>Format and metadata</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>Content type describes serialization; application properties carry scalar filterable metadata.</p></div><div><h5>Use</h5><p>Use MIME values and compact metadata. Do not assume a TypeScript interface survives serialization without runtime validation.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>sessionId</code>, <code>partitionKey</code>, and <code>timeToLive</code></h4><div><span>Types</span><code>string</code>, milliseconds</div><div><span>Purpose</span>Ordering, affinity, expiration</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>Session and partition values select broker affinity; TTL controls message lifetime.</p></div><div><h5>Use</h5><p>Set <code>sessionId</code> for every send to a session queue. Match it to <code>partitionKey</code> when both are used.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Received-only fields</h4><div><span>Interface</span><code>ServiceBusReceivedMessage</code></div><div><span>Owner</span>Service Bus</div></div><div class="property-entry-details"><div><h5>Fields</h5><p><code>sequenceNumber</code>, <code>enqueuedTimeUtc</code>, <code>expiresAtUtc</code>, <code>deliveryCount</code>, <code>lockToken</code>, <code>lockedUntilUtc</code>, <code>deadLetterReason</code>, and <code>deadLetterErrorDescription</code>.</p></div><div><h5>Use</h5><p>Use for settlement, telemetry, and failure diagnosis. Treat lock tokens and sequence numbers as broker-owned values.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="subscribe" class="section-card reveal">
+          <h2>Continuous processing with <code>receiver.subscribe()</code></h2>
+          <p>This SDK does not expose a separate processor class. A <code>ServiceBusReceiver</code> owns the receive link, and <code>subscribe</code> starts callback-driven processing on that receiver.</p>
+<pre class="code" data-lang="typescript">const receiver = client.createReceiver("orders", {
+  receiveMode: "peekLock",
+  maxAutoLockRenewalDurationInMs: 5 * 60 * 1000,
+  identifier: `orders-worker:${process.env.COMPUTERNAME ?? process.pid}`
+});
+
+const subscription = receiver.subscribe({
+  processMessage: async message =&gt; {
+    try {
+      await processOrder(message.body);
+      await receiver.completeMessage(message);
+    } catch (error) {
+      if (error instanceof PermanentOrderError) {
+        await receiver.deadLetterMessage(message, {
+          deadLetterReason: "InvalidOrder",
+          deadLetterErrorDescription: error.message
+        });
+      } else {
+        await receiver.abandonMessage(message);
+      }
+    }
+  },
+  processError: async args =&gt; {
+    console.error(args.errorSource, args.entityPath, args.error);
+  }
+}, {
+  autoCompleteMessages: false,
+  maxConcurrentCalls: 4
+});
+
+await shutdownSignal;
+await subscription.close();
+await receiver.close();
+await client.close();</pre>
+          <p>Keep the subscription handle so shutdown can stop callback delivery. The error callback reports receive and handler infrastructure failures; it does not replace explicit settlement in <code>processMessage</code>.</p>
+        </section>
+
+        <section id="options" class="section-card reveal">
+          <h2>Receiver and subscription option mapping</h2>
+          <p>JavaScript/TypeScript splits common controls between options passed to <code>createReceiver</code> and options passed to <code>subscribe</code>.</p>
+          <div class="property-reference" aria-label="JavaScript and TypeScript Service Bus receiver and subscribe options">
+            <article class="property-entry"><div class="property-entry-header"><h4><code>autoCompleteMessages</code></h4><div><span>Configure on</span><code>subscribe</code></div><div><span>Default</span><code>true</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Completes after a successful callback and abandons when the callback throws, unless the callback already settled the message.</p></div><div><h5>Strategy</h5><p>Set <code>false</code> for explicit complete, abandon, defer, or dead-letter decisions. It is ignored in <code>receiveAndDelete</code> mode.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>maxConcurrentCalls</code></h4><div><span>Configure on</span><code>subscribe</code></div><div><span>Default</span><code>1</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Limits simultaneous calls to <code>processMessage</code> for this subscription.</p></div><div><h5>Strategy</h5><p>Potential concurrency is replicas multiplied by this value. Increase while event-loop delay, memory, downstream pools, and lock completion remain healthy.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>maxAutoLockRenewalDurationInMs</code></h4><div><span>Configure on</span><code>createReceiver</code></div><div><span>Default</span><code>300000</code> ms</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Sets the total automatic renewal window while a PeekLock message is processed. Renewal stops after settlement.</p></div><div><h5>Strategy</h5><p>Set a finite value above expected handler time. Set zero to disable automatic renewal.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Prefetch</h4><div><span>Configure on</span>Not exposed</div><div><span>Default</span>SDK-managed receive credit</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>The current <code>@azure/service-bus</code> receiver options do not expose a public prefetch-count setting.</p></div><div><h5>Strategy</h5><p>Tune throughput with <code>maxConcurrentCalls</code>, handler efficiency, batch receive size, and replica count. Do not invent a <code>prefetchCount</code> option.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>receiveMode</code></h4><div><span>Configure on</span><code>createReceiver</code></div><div><span>Default</span><code>peekLock</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Accepts <code>"peekLock"</code> or <code>"receiveAndDelete"</code>.</p></div><div><h5>Strategy</h5><p>Use <code>peekLock</code> for business work. Use <code>receiveAndDelete</code> only when loss after transfer is acceptable.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>subQueueType</code></h4><div><span>Configure on</span><code>createReceiver</code></div><div><span>Default</span>Main entity</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Accepts <code>"deadLetter"</code> or <code>"transferDeadLetter"</code> to target a subqueue.</p></div><div><h5>Strategy</h5><p>Create a separate receiver for deliberate DLQ recovery. Do not attach the normal worker to a subqueue.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>identifier</code></h4><div><span>Configure on</span><code>createReceiver</code></div><div><span>Default</span>Generated unique value</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Names the receiver in selected logs and exceptions without affecting routing.</p></div><div><h5>Strategy</h5><p>Use a role plus unique replica suffix for operational correlation.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="receiver" class="section-card reveal">
+          <h2>Pull and iterative receiving</h2>
+          <p>Use <code>receiveMessages</code> for bounded batches or <code>getMessageIterator</code> for an application-owned asynchronous loop.</p>
+<pre class="code" data-lang="typescript">const receiver = client.createReceiver("orders", {
+  receiveMode: "peekLock",
+  identifier: `orders-batch:${process.pid}`
+});
+
+try {
+  const messages = await receiver.receiveMessages(20, { maxWaitTimeInMs: 5000 });
+  for (const message of messages) {
+    try {
+      await processOrder(message.body);
+      await receiver.completeMessage(message);
+    } catch {
+      await receiver.abandonMessage(message);
+    }
+  }
+} finally {
+  await receiver.close();
+  await client.close();
+}</pre>
+          <p>The returned array may contain fewer messages than requested. Pull receivers also expose <code>peekMessages</code>, <code>receiveDeferredMessages</code>, and <code>renewMessageLock</code>.</p>
+        </section>
+
+        <section id="objects" class="section-card reveal">
+          <h2>Choose the JavaScript / TypeScript object</h2>
+          <div class="property-reference" aria-label="JavaScript and TypeScript Service Bus object selection">
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusClient</code></h4><div><span>Creates</span>Senders and receivers</div><div><span>Lifetime</span>Application</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Namespace authentication and entity-specific client creation.</p></div><div><h5>Lifecycle</h5><p>Create during startup, reuse, and close after child objects.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusReceiver</code></h4><div><span>Create with</span><code>createReceiver</code></div><div><span>Lifetime</span>Worker or workflow</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Callback subscription, pull receive, iteration, peek, deferral, lock renewal, and settlement.</p></div><div><h5>Lifecycle</h5><p>Reuse one receiver for the same entity and options; settle through that receiver.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Subscription handle</h4><div><span>Returned by</span><code>receiver.subscribe</code></div><div><span>Lifetime</span>Continuous handler registration</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Stopping new callbacks without losing the reference to the active subscription.</p></div><div><h5>Lifecycle</h5><p>Call <code>close</code> during graceful shutdown, then close the receiver and client.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusSessionReceiver</code></h4><div><span>Create with</span><code>acceptSession</code> or <code>acceptNextSession</code></div><div><span>Lifetime</span>Accepted session</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Ordered receive and settlement within one locked session, including session state and lock renewal.</p></div><div><h5>Lifecycle</h5><p>Close after that session's work so another receiver can acquire it.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusSender</code></h4><div><span>Create with</span><code>createSender</code></div><div><span>Lifetime</span>Long-lived per entity</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Individual or batched sends, scheduling, and cancellation.</p></div><div><h5>Lifecycle</h5><p>Reuse instead of creating a sender per message.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusAdministrationClient</code></h4><div><span>Package</span><code>@azure/service-bus</code></div><div><span>Lifetime</span>Administration workflow</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Entity definitions, rules, and runtime properties.</p></div><div><h5>Lifecycle</h5><p>Keep management operations outside the message hot path.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="variants" class="section-card reveal">
+          <h2>Sessions, subscriptions, and dead-letter queues</h2>
+          <ul>
+            <li>For a topic subscription, call <code>createReceiver(topicName, subscriptionName, options)</code>.</li>
+            <li>For one session, call <code>acceptSession</code>; for the next available session, call <code>acceptNextSession</code>. Your application manages concurrency across accepted session receivers.</li>
+            <li>For dead-letter recovery, call <code>createReceiver(entity, { subQueueType: "deadLetter", receiveMode: "peekLock" })</code>.</li>
+            <li>Use an <code>AbortSignal</code> with receive or subscribe options when cancellation must be coordinated with the rest of the Node.js application.</li>
+          </ul>
+          <p><strong>References:</strong> <a href="https://learn.microsoft.com/javascript/api/@azure/service-bus/servicebusreceiver?view=azure-node-latest">receiver API</a>, <a href="https://learn.microsoft.com/javascript/api/@azure/service-bus/subscribeoptions?view=azure-node-latest">subscribe options</a>, and <a href="https://learn.microsoft.com/javascript/api/@azure/service-bus/servicebusreceiveroptions?view=azure-node-latest">receiver options</a>.</p>
+        </section>
+
+        <nav class="pager" aria-label="Reference pagination"><a class="prev" href="../java/queue-processing.html"><small>Previous</small><strong>&lt;- Java</strong></a><a class="next" href="../python/queue-processing.html"><small>Next</small><strong>Python -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#setup">Package and authentication</a><a href="#send">Send to a queue</a><a href="#message-fields">Message fields</a><a href="#subscribe">Receiver subscription</a><a href="#options">Option mapping</a><a href="#receiver">Pull receiver</a><a href="#objects">Object guide</a><a href="#variants">Sessions and DLQ</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

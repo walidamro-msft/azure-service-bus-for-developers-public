@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Topics and Subscriptions - Java - Azure Service Bus Workshop</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" /><link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="topic-java"><div class="page">
+  <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../../topics-subscriptions.html">Topics and Subscriptions</a><span class="sep">/</span><span>Java</span></nav>
+  <header class="hero"><h1>Topics and subscriptions in Java</h1><p class="subtitle">Publish events, process independent subscription copies, and manage filtering with the Azure Service Bus Java SDK.</p><div class="badge-row"><span class="badge">Java 17+</span><span class="badge">azure-messaging-servicebus</span><span class="badge">Publisher and processor clients</span></div></header>
+  <div class="layout"><main class="content">
+    <section id="setup" class="section-card reveal"><h2>Package, identity, and topology</h2><p>Add <code>azure-messaging-servicebus</code> and <code>azure-identity</code>. Reuse clients instead of rebuilding them per message. Grant sender and receiver roles at the narrowest practical scope.</p>
+<pre class="code" data-lang="xml">&lt;dependency&gt;
+  &lt;groupId&gt;com.azure&lt;/groupId&gt;
+  &lt;artifactId&gt;azure-messaging-servicebus&lt;/artifactId&gt;
+  &lt;version&gt;7.x.x&lt;/version&gt;
+&lt;/dependency&gt;
+&lt;dependency&gt;
+  &lt;groupId&gt;com.azure&lt;/groupId&gt;
+  &lt;artifactId&gt;azure-identity&lt;/artifactId&gt;
+  &lt;version&gt;1.x.x&lt;/version&gt;
+&lt;/dependency&gt;</pre>
+      <div class="callout"><strong>Fan-out boundary:</strong> each matching subscription receives an independent durable copy. Two processors on one subscription compete; processors on different subscriptions each receive a copy.</div></section>
+
+    <section id="publish" class="section-card reveal"><h2>Publish to a topic</h2><p>Select the topic with <code>sender().topicName(...)</code>. Subscription rules inspect system and application properties, not fields hidden in the serialized body.</p>
+<pre class="code" data-lang="java">TokenCredential credential = new DefaultAzureCredentialBuilder().build();
+String fqns = System.getenv("SERVICEBUS_FQNS");
+
+try (ServiceBusSenderClient sender = new ServiceBusClientBuilder()
+    .fullyQualifiedNamespace(fqns)
+    .credential(credential)
+    .sender()
+    .topicName("order-events")
+    .buildClient()) {
+
+  ServiceBusMessage message = new ServiceBusMessage(
+      "{\"orderId\":\"ORD-123\",\"total\":149.50}")
+      .setMessageId("order-created:ORD-123")
+      .setCorrelationId("order:ORD-123")
+      .setSubject("OrderCreated.v1")
+      .setContentType("application/json");
+  message.getApplicationProperties().put("region", "us");
+  message.getApplicationProperties().put("priority", 3);
+  sender.sendMessage(message);
+}</pre><p>Preserve <code>messageId</code> across retries of the same publish. Each subscriber can then use it as an idempotency key for its own side effects.</p></section>
+
+    <section id="subscribe" class="section-card reveal"><h2>Process one subscription</h2><p>Configure both <code>topicName</code> and <code>subscriptionName</code>. Build a separate processor for each independently scaled capability.</p>
+<pre class="code" data-lang="java">ServiceBusProcessorClient processor = new ServiceBusClientBuilder()
+    .fullyQualifiedNamespace(fqns)
+    .credential(credential)
+    .processor()
+    .topicName("order-events")
+    .subscriptionName("inventory")
+    .disableAutoComplete()
+    .maxConcurrentCalls(4)
+    .maxAutoLockRenewDuration(Duration.ofMinutes(5))
+    .processMessage(context -&gt; {
+      try {
+        reserveInventory(context.getMessage().getBody().toString());
+        context.complete();
+      } catch (InvalidOrderException exception) {
+        context.deadLetter(new DeadLetterOptions()
+            .setDeadLetterReason("InvalidOrder")
+            .setDeadLetterErrorDescription(exception.getMessage()));
+      } catch (RuntimeException exception) {
+        context.abandon();
+      }
+    })
+    .processError(context -&gt; System.err.println(context.getException()))
+    .buildProcessorClient();
+
+processor.start();</pre><p>For pull-based handling, build a receiver with <code>receiver().topicName(...).subscriptionName(...)</code>. Settlement changes only the selected subscription copy.</p></section>
+
+    <section id="filters" class="section-card reveal"><h2>Manage subscription rules</h2><p>The default <code>$Default</code> rule matches every message. Remove it before adding selective rules. Use SQL filters for expressions and correlation filters for optimized exact matching.</p>
+<pre class="code" data-lang="java">ServiceBusAdministrationClient admin = new ServiceBusAdministrationClientBuilder()
+    .fullyQualifiedNamespace(fqns)
+    .credential(credential)
+    .buildClient();
+
+admin.deleteRule("order-events", "inventory", RuleProperties.DEFAULT_RULE_NAME);
+admin.createRule("order-events", "inventory",
+    new CreateRuleOptions()
+        .setName("UsOrders")
+        .setFilter(new SqlRuleFilter("region = 'us' AND priority &gt;= 2")));
+
+admin.createRule("order-events", "billing",
+    new CreateRuleOptions()
+        .setName("OrderCreated")
+        .setFilter(new CorrelationRuleFilter().setSubject("OrderCreated.v1")));</pre>
+      <p>Keep property names, casing, and value types stable. A Java integer property and a string containing digits are different values to the broker.</p></section>
+
+    <section id="operations" class="section-card reveal"><h2>Operational design</h2><ul><li>Monitor backlog age, active count, and dead-letter count for every subscription.</li><li>Scale processors independently by subscription and downstream capacity.</li><li>Keep processor clients alive for the worker lifetime and close them gracefully.</li><li>Use a dedicated dead-letter receiver for each subscription recovery path.</li><li>Keep administration clients and rule changes off the message hot path.</li></ul><p><strong>References:</strong> <a href="https://learn.microsoft.com/java/api/com.azure.messaging.servicebus.servicebusclientbuilder?view=azure-java-stable">client builder</a>, <a href="https://learn.microsoft.com/java/api/com.azure.messaging.servicebus.administration.servicebusadministrationclient?view=azure-java-stable">administration client</a>, and <a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-java-how-to-use-topics-subscriptions">Java topics and subscriptions</a>.</p></section>
+
+    <nav class="pager" aria-label="Reference pagination"><a class="prev" href="../dotnet/topic-processing.html"><small>Previous</small><strong>&lt;- .NET</strong></a><a class="next" href="../javascript/topic-processing.html"><small>Next</small><strong>JavaScript / TypeScript -&gt;</strong></a></nav>
+  </main><aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#setup">Package and topology</a><a href="#publish">Publish to a topic</a><a href="#subscribe">Process a subscription</a><a href="#filters">Subscription rules</a><a href="#operations">Operational design</a></aside></div>
+</div><script type="module" src="../../assets/site.js"></script></body></html>

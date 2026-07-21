@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Module 3: SKUs and Tiers</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("sb-runtime-theme");
+      document.documentElement.setAttribute("data-theme", (t === "light" || t === "dark") ? t : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="assets/site.css" />
+</head>
+<body data-root="." data-active="module-2">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><span>SKUs and Tiers</span></nav>
+    <header class="hero">
+      <h1>SKUs and Pricing Tiers</h1>
+      <p class="subtitle">Choose the correct Service Bus tier by mapping functional and non-functional requirements to cost, scale, and isolation characteristics.</p>
+      <div class="badge-row"><span class="badge">Decision module</span><span class="badge">~20 min</span><span class="badge">Module 3 of 11</span></div>
+    </header>
+
+    <div class="layout">
+      <main class="content">
+        <section id="tier-overview" class="section-card reveal">
+          <h2>Tier overview</h2>
+          <p>Service Bus offers three primary tiers: Basic, Standard, and Premium. The right tier depends on throughput, latency consistency, advanced features, and compliance/network constraints.</p>
+          <div class="table-wrap">
+            <table aria-label="Tier overview">
+              <thead><tr><th>Tier</th><th>Best for</th><th>Key limits</th></tr></thead>
+              <tbody>
+                <tr><td>Basic</td><td>Simple queue workloads</td><td>No topics/subscriptions or advanced features</td></tr>
+                <tr><td>Standard</td><td>General enterprise messaging</td><td>Shared compute, variable latency under contention</td></tr>
+                <tr><td>Premium</td><td>Mission-critical and isolated workloads</td><td>Higher baseline cost, dedicated messaging units</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="feature-matrix" class="section-card reveal">
+          <h2>Feature matrix</h2>
+          <p>Use this matrix to compare the messaging, networking, resiliency, and capacity differences that most often determine tier selection.</p>
+          <div class="table-wrap">
+            <table aria-label="Feature matrix">
+              <thead><tr><th>Capability</th><th>Basic</th><th>Standard</th><th>Premium</th></tr></thead>
+              <tbody>
+                <tr><td>Queues</td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Scheduled messages</td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Dead-letter queues</td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Message deferral</td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Topics and subscriptions</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Subscription filters and actions</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Message sessions (FIFO)</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Transactions</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Duplicate detection</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Auto-forwarding (ForwardTo / SendVia)</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Entity partitioning</td><td>Entity level (16 partitions)</td><td>Entity level (16 partitions)</td><td>Namespace level (1, 2, or 4 partitions)</td></tr>
+                <tr><td>Maximum message size</td><td>256 KB</td><td>256 KB</td><td>Up to 100 MB with AMQP</td></tr>
+                <tr><td>Maximum queue or topic size</td><td>Up to 5 GB; 80 GB when partitioned</td><td>Up to 5 GB; 80 GB when partitioned</td><td>80 GB</td></tr>
+                <tr><td>Namespace storage capacity</td><td>400 GB</td><td>400 GB</td><td>1 TB per messaging unit</td></tr>
+                <tr><td>Namespace throughput limit</td><td>1,000 operations/second</td><td>1,000 operations/second</td><td>Capacity based on messaging units and workload</td></tr>
+                <tr><td>Dedicated isolation</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Predictable performance</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Messaging unit scaling</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-cold">No</span></td><td>1, 2, 4, 8, or 16 units</td></tr>
+                <tr><td>Availability Zones</td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Geo-Replication (metadata and message data)</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Private endpoints</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Virtual network service endpoints</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>Customer-managed keys</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>JMS 1.1</td><td><span class="chip chip-cold">No</span></td><td>Queue-focused subset</td><td><span class="chip chip-success">Yes</span></td></tr>
+                <tr><td>JMS 2.0</td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-cold">No</span></td><td><span class="chip chip-success">Yes</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="callout"><strong>Note:</strong> Availability Zones and some capabilities vary by Azure region. Premium messages larger than 1 MB require AMQP and entity-level configuration. Confirm current regional support and limits before deployment.</p>
+        </section>
+
+        <section id="decision-guide" class="section-card reveal">
+          <h2>Decision guide</h2>
+          <div class="diagram-wrap">
+            <pre class="mermaid">
+flowchart TD
+    A[Need topics or advanced messaging?] -->|No| B[Basic]
+    A -->|Yes| C[Need predictable latency and isolation?]
+    C -->|No| D[Standard]
+    C -->|Yes| E[Premium]
+            </pre>
+          </div>
+        </section>
+
+        <section id="pricing-estimates" class="section-card reveal">
+          <h2>Cost Estimate</h2>
+          <p>All prices in this section are based on public Azure retail pricing for the East US region in USD, retrieved on July 16, 2026. They are estimates, not quotes. Azure agreements, taxes, data transfer, Geo-Replication, and other services can change the final bill.</p>
+
+          <h3>Monthly cost calculator</h3>
+          <p class="calc-pricing-note">Estimate one Service Bus namespace using East US retail rates. Inputs and results stay only in this page's memory and are cleared when you close or reload it.</p>
+          <form id="service-bus-cost-calculator" class="calc" autocomplete="off">
+            <div class="calc-grid">
+              <div class="calc-field">
+                <label for="calc-tier">Pricing tier</label>
+                <select id="calc-tier" name="tier">
+                  <option value="basic">Basic</option>
+                  <option value="standard" selected>Standard</option>
+                  <option value="premium">Premium</option>
+                </select>
+              </div>
+              <div class="calc-field" data-calc-field="operations">
+                <label for="calc-operations">Monthly operations (millions)</label>
+                <input id="calc-operations" name="operations" type="number" min="0" step="1" value="13" inputmode="decimal" />
+              </div>
+              <div class="calc-field" data-calc-field="messaging-units" hidden>
+                <label for="calc-messaging-units">Messaging units</label>
+                <select id="calc-messaging-units" name="messagingUnits">
+                  <option value="1" selected>1 MU</option>
+                  <option value="2">2 MUs</option>
+                  <option value="4">4 MUs</option>
+                  <option value="8">8 MUs</option>
+                  <option value="16">16 MUs</option>
+                </select>
+              </div>
+              <div class="calc-field" data-calc-field="geo-transfer" hidden>
+                <label for="calc-geo-transfer">Geo-Replication transfer (GB/month)</label>
+                <input id="calc-geo-transfer" name="geoTransfer" type="number" min="0" step="1" value="0" inputmode="decimal" />
+              </div>
+            </div>
+            <div class="calc-actions">
+              <button class="calc-reset" type="reset">Reset estimate</button>
+            </div>
+            <div class="calc-results" aria-live="polite" aria-atomic="true">
+              <div class="calc-total">
+                <span class="calc-total-label">Estimated monthly cost</span>
+                <output id="calc-total" class="calc-total-value" for="calc-tier calc-operations calc-messaging-units calc-geo-transfer">$9.81</output>
+                <span id="calc-plan-name" class="calc-plan-name">Standard</span>
+              </div>
+              <div class="table-wrap">
+                <table aria-label="Calculator cost breakdown">
+                  <thead><tr><th>Charge</th><th>Calculation</th><th>Monthly estimate</th></tr></thead>
+                  <tbody id="calc-breakdown"></tbody>
+                </table>
+              </div>
+              <p id="calc-result-note" class="calc-result-note"></p>
+            </div>
+          </form>
+
+          <h3>Retail rates used</h3>
+          <div class="table-wrap">
+            <table aria-label="East US Service Bus retail rates">
+              <thead><tr><th>Tier or meter</th><th>East US retail rate</th><th>How billing works</th></tr></thead>
+              <tbody>
+                <tr><td>Basic messaging operations</td><td>$0.05 per 1 million operations</td><td>No namespace base charge</td></tr>
+                <tr><td>Standard namespace base charge</td><td>About $9.81 per month</td><td>One base charge per namespace, based on 730 billing hours</td></tr>
+                <tr><td>Standard messaging operations</td><td>First 13 million included; then $0.80, $0.50, and $0.20 per million by usage band</td><td>Lower rates apply as monthly operation volume crosses each pricing band</td></tr>
+                <tr><td>Premium messaging unit</td><td>About $677.08 per MU per month</td><td>Based on 730 billing hours; operations and brokered connections have no separate charge</td></tr>
+                <tr><td>Premium Geo-Replication data transfer</td><td>$0.09 per GB for Zone 1</td><td>Optional charge in addition to Premium messaging units</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Worked monthly examples</h3>
+          <div class="table-wrap">
+            <table aria-label="East US Service Bus sample monthly costs">
+              <thead><tr><th>Sample workload</th><th>Calculation</th><th>Estimated monthly cost</th></tr></thead>
+              <tbody>
+                <tr><td>Basic: 10 million operations</td><td>10 x $0.05</td><td><strong>$0.50</strong></td></tr>
+                <tr><td>Basic: 100 million operations</td><td>100 x $0.05</td><td><strong>$5.00</strong></td></tr>
+                <tr><td>Standard: namespace running all month, up to 13 million operations</td><td>$9.81 monthly base; operations included</td><td><strong>$9.81</strong></td></tr>
+                <tr><td>Standard: namespace running all month, 100 million operations</td><td>$9.81 monthly base + (87 x $0.80)</td><td><strong>$79.41</strong></td></tr>
+                <tr><td>Premium: 1 messaging unit running all month</td><td>1 MU x $677.08 per month</td><td><strong>$677.08</strong></td></tr>
+                <tr><td>Premium: 2 messaging units running all month</td><td>2 MUs x $677.08 per month</td><td><strong>$1,354.15</strong></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout"><strong>Estimate assumptions:</strong> Monthly equivalents use 730 billing hours, each API call counts according to Azure's operation-metering rules, and the examples exclude excess brokered connections, data transfer, private endpoint charges, Geo-Replication, support, and dependent services. Premium is billed for provisioned messaging units even when traffic is low.</div>
+          <p>Before deployment, confirm the current rate with the <a href="https://azure.microsoft.com/pricing/details/service-bus/" target="_blank" rel="noopener noreferrer">Service Bus pricing page</a> and model your expected usage in the <a href="https://azure.microsoft.com/pricing/calculator/" target="_blank" rel="noopener noreferrer">Azure Pricing Calculator</a>.</p>
+        </section>
+
+        <section id="cost-practice" class="section-card reveal">
+          <h2>Cost and governance practice</h2>
+          <ul>
+            <li>Start with Standard for most dev/test environments.</li>
+            <li>Promote to Premium for strict latency SLOs and noisy-neighbor avoidance.</li>
+            <li>Tag namespaces with owner, environment, and cost center for chargeback.</li>
+            <li>Use alerts on incoming requests, throttles, and DLQ growth.</li>
+          </ul>
+        </section>
+
+        <nav class="pager" aria-label="Workshop pagination">
+          <a class="prev" href="architecture-design.html"><small>Previous</small><strong><- Architecture Design</strong></a>
+          <a class="next" href="deploy-portal.html"><small>Next</small><strong>Deploy via Portal -></strong></a>
+        </nav>
+      </main>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>On This Page</h3>
+        <a href="#tier-overview">Tier overview</a>
+        <a href="#feature-matrix">Feature matrix</a>
+        <a href="#decision-guide">Decision guide</a>
+        <a href="#pricing-estimates">Cost Estimate</a>
+        <a href="#cost-practice">Cost and governance practice</a>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 2: Topic Fan-out - Python Labs</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="python">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../python.html">Python labs</a><span class="sep">/</span><span>Lab 2</span></nav>
+    <header class="hero"><h1>Lab 2 - Publish one event to two subscribers</h1><p class="subtitle">Create a topic, build a publisher application, and run one reusable subscriber for two independent subscriptions.</p><div class="badge-row"><span class="badge">60 minutes</span><span class="badge">Three processes</span><span class="badge">Topics</span></div></header>
+    <div class="layout">
+      <main class="content">
+        <section id="case-study" class="section-card reveal">
+          <h2>Case study: notify inventory and customer care</h2>
+          <p>When checkout confirms an order, inventory must reserve stock and customer care must prepare a confirmation. The publisher sends one <code>OrderCreated</code> event. Service Bus copies it into two durable subscriptions so both business capabilities receive the event independently.</p>
+<pre class="mermaid">flowchart LR
+  P[Order publisher] -- one message --&gt; T[order-events topic]
+  T -- copy --&gt; I[inventory subscription]
+  T -- copy --&gt; C[customer-care subscription]
+  I -- receive --&gt; SI[Subscriber: inventory]
+  C -- receive --&gt; SC[Subscriber: customer-care]</pre>
+          <div class="callout"><strong>Important:</strong> Run each receiver against a different subscription. Two receivers using the same subscription are competing consumers and would split messages instead of both receiving a copy.</div>
+        </section>
+
+        <section id="provision" class="section-card reveal">
+          <h2>1. Provision the topic and subscriptions</h2>
+          <p>Reuse the namespace and PowerShell variables from Lab 1.</p>
+          <h3>Option A: Azure portal</h3>
+          <ol>
+            <li>In the Azure portal, open the Service Bus namespace you created in Lab 1.</li>
+            <li>Under <strong>Entities</strong>, select <strong>Topics</strong>, then select <strong>+ Topic</strong>.</li>
+            <li>Set the topic name to <code>order-events</code>, keep the other defaults, and select <strong>Create</strong>.</li>
+            <li>Open the <code>order-events</code> topic, select <strong>Subscriptions</strong>, then select <strong>+ Subscription</strong>.</li>
+            <li>Set the subscription name to <code>inventory</code>, keep the other defaults, and select <strong>Create</strong>.</li>
+            <li>Select <strong>+ Subscription</strong> again, create a second subscription named <code>customer-care</code>, and keep the other defaults.</li>
+          </ol>
+          <h3>Option B: Azure CLI</h3>
+<pre class="code" data-lang="powershell">az servicebus topic create --resource-group $resourceGroup --namespace-name $namespace --name order-events
+az servicebus topic subscription create --resource-group $resourceGroup --namespace-name $namespace --topic-name order-events --name inventory
+az servicebus topic subscription create --resource-group $resourceGroup --namespace-name $namespace --topic-name order-events --name customer-care
+$env:SERVICEBUS_FQNS = "$namespace.servicebus.windows.net"</pre>
+          <div class="callout"><strong>Note:</strong> Complete either Option A or Option B, not both. Reuse the <code>SERVICEBUS_FQNS</code> value from Lab 1.</div>
+          <p><strong>Checkpoint:</strong> The portal shows one topic and two subscriptions, each with an active message count of zero.</p>
+        </section>
+
+        <section id="projects" class="section-card reveal">
+          <h2>2. Create publisher and subscriber applications</h2>
+<pre class="code" data-lang="powershell">mkdir lab2-topic
+cd lab2-topic
+py -3.10 -m venv .venv
+Set-ExecutionPolicy -Scope Process Bypass
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install azure-servicebus azure-identity
+New-Item publisher.py, subscriber.py -ItemType File</pre>
+          <p>The subscriber accepts a subscription name as a command-line argument, so the same application can run as two independent business consumers.</p>
+        </section>
+
+        <section id="publisher" class="section-card reveal">
+          <h2>3. Build the order publisher</h2>
+          <p>Replace <code>publisher.py</code> with:</p>
+<pre class="code" data-lang="python">import json
+import os
+from datetime import datetime, timezone
+
+from azure.identity import DefaultAzureCredential
+from azure.servicebus import ServiceBusClient, ServiceBusMessage
+
+fully_qualified_namespace = os.environ["SERVICEBUS_FQNS"]
+order_id = f"ORD-{datetime.now(timezone.utc):%H%M%S}"
+body = json.dumps({"orderId": order_id, "product": "AZ-BOOK", "quantity": 2})
+
+with ServiceBusClient(fully_qualified_namespace, DefaultAzureCredential()) as client:
+    with client.get_topic_sender(topic_name="order-events") as sender:
+        sender.send_messages(ServiceBusMessage(
+            body,
+            message_id=order_id,
+            subject="OrderCreated",
+            content_type="application/json",
+        ))
+
+print(f"Published one event for {order_id}")</pre>
+        </section>
+
+        <section id="subscriber" class="section-card reveal">
+          <h2>4. Build the reusable subscriber</h2>
+          <p>Replace <code>subscriber.py</code> with:</p>
+<pre class="code" data-lang="python">import argparse
+import os
+
+from azure.identity import DefaultAzureCredential
+from azure.servicebus import ServiceBusClient
+
+parser = argparse.ArgumentParser()
+parser.add_argument("subscription", choices=["inventory", "customer-care"])
+subscription_name = parser.parse_args().subscription
+fully_qualified_namespace = os.environ["SERVICEBUS_FQNS"]
+
+with ServiceBusClient(fully_qualified_namespace, DefaultAzureCredential()) as client:
+    with client.get_subscription_receiver(
+        topic_name="order-events",
+        subscription_name=subscription_name,
+        max_wait_time=20,
+    ) as receiver:
+        print(f"Listening on {subscription_name}. Press Ctrl+C to stop.")
+        try:
+            for message in receiver:
+                print(f"[{subscription_name}] received {message.message_id}: {str(message)}")
+                receiver.complete_message(message)
+        except KeyboardInterrupt:
+            print(f"Stopped {subscription_name}.")</pre>
+        </section>
+
+        <section id="run" class="section-card reveal">
+          <h2>5. Run three processes and verify fan-out</h2>
+          <p>Activate the same virtual environment and set <code>SERVICEBUS_FQNS</code> in each terminal.</p>
+<pre class="code" data-lang="powershell"># Terminal 1
+python subscriber.py inventory
+
+# Terminal 2
+python subscriber.py customer-care
+
+# Terminal 3
+python publisher.py</pre>
+          <p><strong>Expected result:</strong> The publisher reports one sent event. Both subscriber terminals display the same <code>MessageId</code> and body. Each subscription's active message count returns to zero.</p>
+          <p><strong>Challenge:</strong> Stop only the customer-care process and publish another event. Inventory processes it immediately while the customer-care subscription retains its own copy. Restart customer-care and observe it receive the stored event.</p>
+        </section>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-1.html"><small>Previous</small><strong>&lt;- Lab 1</strong></a><a class="next" href="lab-3.html"><small>Next</small><strong>Lab 3 -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#projects">2. Create apps</a><a href="#publisher">3. Publisher</a><a href="#subscriber">4. Subscriber</a><a href="#run">5. Run and verify</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

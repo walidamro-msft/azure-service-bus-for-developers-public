@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Module 10: Administration and Operations</title>
+  <meta name="description" content="Operate Azure Service Bus safely with runtime inspection, entity administration, capacity planning, troubleshooting, and dead-letter recovery." />
+  <script>
+    (function () {
+      var t = localStorage.getItem("sb-runtime-theme");
+      document.documentElement.setAttribute("data-theme", (t === "light" || t === "dark") ? t : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="assets/site.css" />
+</head>
+<body data-root="." data-active="module-9">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><span>Administration and Operations</span></nav>
+    <header class="hero">
+      <h1>Administration and Operations</h1>
+      <p class="subtitle">Run Service Bus as a production messaging system: inspect health, govern entities, manage capacity, and recover failed messages safely.</p>
+      <div class="badge-row"><span class="badge">Hands-on</span><span class="badge">~50 min</span><span class="badge">Module 10 of 11</span></div>
+    </header>
+
+    <div class="layout">
+      <main class="content">
+        <section id="operating-model" class="section-card reveal">
+          <h2>Build an operating model</h2>
+          <p>Separate application data-plane access from administrative control. Producers normally need <strong>Data Sender</strong>, consumers need <strong>Data Receiver</strong>, and operators who manage entities need <strong>Data Owner</strong>. Scope every assignment to the smallest practical namespace or entity.</p>
+          <div class="table-wrap">
+            <table aria-label="Service Bus administration responsibilities">
+              <thead><tr><th>Responsibility</th><th>Questions to answer</th><th>Primary signal</th></tr></thead>
+              <tbody>
+                <tr><td>Availability</td><td>Can clients connect, send, and receive?</td><td>Server errors, successful requests</td></tr>
+                <tr><td>Flow health</td><td>Is work arriving faster than it is processed?</td><td>Active messages, incoming/outgoing rates</td></tr>
+                <tr><td>Failure handling</td><td>Why are messages failing, and can they be replayed safely?</td><td>DLQ count, reason, message age</td></tr>
+                <tr><td>Capacity</td><td>Are throttling, connections, size, or throughput limiting the workload?</td><td>Throttled requests, namespace size, CPU in Premium</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="runtime-inspection" class="section-card reveal">
+          <h2>Inspect without changing state</h2>
+          <p>Start every incident with read-only evidence. Runtime properties provide counts; peeking samples messages without locking or settling them.</p>
+<pre class="code" data-lang="csharp">using Azure.Identity;
+using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
+
+string fullyQualifiedNamespace = "&lt;namespace&gt;.servicebus.windows.net";
+string queueName = "orders-queue";
+var credential = new DefaultAzureCredential();
+
+var admin = new ServiceBusAdministrationClient(fullyQualifiedNamespace, credential);
+QueueRuntimeProperties runtime = await admin.GetQueueRuntimePropertiesAsync(queueName);
+
+Console.WriteLine($"Active: {runtime.ActiveMessageCount}");
+Console.WriteLine($"Dead-letter: {runtime.DeadLetterMessageCount}");
+Console.WriteLine($"Scheduled: {runtime.ScheduledMessageCount}");
+Console.WriteLine($"Size: {runtime.SizeInBytes:N0} bytes");
+
+await using var client = new ServiceBusClient(fullyQualifiedNamespace, credential);
+await using ServiceBusReceiver receiver = client.CreateReceiver(queueName);
+foreach (ServiceBusReceivedMessage message in await receiver.PeekMessagesAsync(10))
+{
+    Console.WriteLine($"{message.SequenceNumber}: {message.Subject}");
+}</pre>
+          <p><strong>Checkpoint:</strong> Compare runtime counts with the Portal overview and explain why a peek does not reduce the active-message count.</p>
+        </section>
+
+        <section id="entity-governance" class="section-card reveal">
+          <h2>Govern entity configuration</h2>
+          <ul>
+            <li>Manage namespace and entity definitions through Bicep or another reviewed infrastructure-as-code workflow.</li>
+            <li>Use the administration SDK for controlled runtime tooling and dynamic entity scenarios, not as an untracked replacement for infrastructure as code.</li>
+            <li>Review lock duration, default TTL, maximum delivery count, duplicate detection, sessions, partitioning, and forwarding before deployment because some settings cannot be changed later.</li>
+            <li>Record who owns each queue or subscription, its schema, its retention expectation, and its recovery runbook.</li>
+          </ul>
+          <p>Pause or disable an entity only through an approved incident procedure. Deleting an entity deletes its messages and should never be the first response to a backlog.</p>
+        </section>
+
+        <section id="capacity" class="section-card reveal">
+          <h2>Capacity and continuity</h2>
+          <ul>
+            <li>Know the quota and feature limits for the selected tier before load testing.</li>
+            <li>In Premium, monitor namespace CPU and memory and scale messaging units from measured demand.</li>
+            <li>Use batching and long-lived SDK clients; creating clients per message wastes connections and can trigger throttling.</li>
+            <li>Choose Geo-Disaster Recovery for metadata failover requirements and Geo-Replication when replicated message data is required and supported for the workload.</li>
+          </ul>
+          <p>Scaling is not a substitute for consumer health. A growing backlog with flat outgoing throughput usually points to consumer capacity or failures first.</p>
+        </section>
+
+        <section id="geo-replication" class="section-card reveal">
+          <h2>Geo-Replication</h2>
+          <p>Geo-Replication keeps Service Bus metadata and message data synchronized between a primary region and a secondary region. Use the namespace hostname in your clients, not a hard-coded region URL, because Azure routes traffic to the current primary region after promotion.</p>
+          <div class="callout"><strong>Important:</strong> Promotion is customer initiated. Azure does not automatically fail over the namespace. In normal operation, the secondary region is a hot standby and you cannot read or write to it directly.</div>
+          <div class="table-wrap">
+            <table aria-label="Service Bus geo-replication scenarios">
+              <thead><tr><th>Scenario</th><th>What it means</th><th>What to expect</th></tr></thead>
+              <tbody>
+                <tr><td>Regional outage</td><td>The primary region becomes unavailable or unreliable.</td><td>Promote the secondary region manually so producers and consumers keep using the same namespace hostname against the new primary. During promotion, clients can see brief errors and reconnects.</td></tr>
+                <tr><td>Planned maintenance</td><td>You need to service the primary region without stopping the workload.</td><td>Promote the secondary first, then perform maintenance. This is the safest option when you want to control the timing of the cutover.</td></tr>
+                <tr><td>Region migration</td><td>You want the namespace to run in a different region permanently.</td><td>Enable Geo-Replication to the target region, wait for synchronization, then perform a planned promotion and optionally remove the old region afterward.</td></tr>
+                <tr><td>Long outage or lag</td><td>The primary is down for hours or the replica falls behind.</td><td>The namespace keeps working after you promote, but replication is still only guaranteed for the data that made it to the secondary before promotion. If lag grows too large, the primary can throttle requests.</td></tr>
+                <tr><td>Failback</td><td>The original primary returns after you already promoted the secondary.</td><td>The old primary comes back as a secondary and resynchronizes. Do not assume it automatically contains every message that was in flight during the outage.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Two operating details matter most. First, promotion usually takes minutes rather than seconds, so plan for a short interruption while clients reconnect. Second, synchronous replication gives the strongest data assurance but increases latency because each commit must succeed in both regions; asynchronous replication keeps latency lower but allows lag, so the service may throttle once the lag limit is reached.</p>
+          <p>For a production runbook, rehearse promotion at least once, monitor the replication lag metrics, and decide in advance whether your team will use planned or forced promotion for a given incident.</p>
+        </section>
+
+        <section id="incident-response" class="section-card reveal">
+          <h2>Incident response sequence</h2>
+          <ol>
+            <li>Confirm scope: namespace, entity, subscription, region, and affected client operation.</li>
+            <li>Inspect Azure Service Health, metrics, runtime properties, and recent deployment or configuration changes.</li>
+            <li>Classify the failure as authentication, network, quota/throttling, lock/settlement, application processing, or service availability.</li>
+            <li>Mitigate with the least destructive action and preserve failed-message evidence.</li>
+            <li>Verify recovery from both message-flow metrics and application traces.</li>
+          </ol>
+        </section>
+
+        <section id="dlq-runbook" class="section-card reveal">
+          <h2>Dead-letter recovery runbook</h2>
+          <p>DLQ messages do not expire automatically. Alert on accumulation and define an owner. Before replay, inspect the reason, fix the cause, validate the payload, preserve identifying properties, and confirm that the consumer is idempotent.</p>
+          <div class="callout warn"><strong>Important:</strong> A replay sends a new message. Complete the original DLQ message only after the replacement send succeeds. Blind bulk replay can repeat the original outage.</div>
+        </section>
+
+        <section id="lab" class="section-card reveal">
+          <h2>.NET administration lab</h2>
+          <p>Use <a href="../../labs/Lab6-Administration.md">Lab 6</a> to build a passwordless administration console, inspect queue health, peek messages, and practice a documented recovery decision.</p>
+        </section>
+
+        <section id="references" class="section-card reveal">
+          <h2>References</h2>
+          <ul>
+            <li><a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-quotas" target="_blank" rel="noopener">Service Bus quotas and limits</a></li>
+            <li><a href="https://learn.microsoft.com/azure/service-bus-messaging/monitor-service-bus-reference" target="_blank" rel="noopener">Monitoring data reference</a></li>
+            <li><a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-dead-letter-queues" target="_blank" rel="noopener">Dead-letter queues</a></li>
+            <li><a href="https://learn.microsoft.com/dotnet/api/azure.messaging.servicebus.administration.servicebusadministrationclient" target="_blank" rel="noopener">ServiceBusAdministrationClient API</a></li>
+            <li><a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-troubleshooting-guide" target="_blank" rel="noopener">Service Bus troubleshooting guide</a></li>
+          </ul>
+        </section>
+
+        <nav class="pager" aria-label="Workshop pagination">
+          <a class="prev" href="security-monitoring.html"><small>Previous</small><strong>&lt;- Security and Monitoring</strong></a>
+          <a class="next" href="summary.html"><small>Next</small><strong>Summary -&gt;</strong></a>
+        </nav>
+      </main>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>On This Page</h3>
+        <a href="#operating-model">Operating model</a>
+        <a href="#runtime-inspection">Runtime inspection</a>
+        <a href="#entity-governance">Entity governance</a>
+        <a href="#capacity">Capacity and continuity</a>
+        <a href="#geo-replication">Geo-Replication</a>
+        <a href="#incident-response">Incident response</a>
+        <a href="#dlq-runbook">DLQ runbook</a>
+        <a href="#lab">.NET administration lab</a>
+        <a href="#references">References</a>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

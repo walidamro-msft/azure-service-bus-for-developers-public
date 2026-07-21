@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Working with Queues - Python - Azure Service Bus Workshop</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="queue-python">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../../queues.html">Working with Queues</a><span class="sep">/</span><span>Python</span></nav>
+    <header class="hero">
+      <h1>Working with queues in Python</h1>
+      <p class="subtitle">Map Service Bus processing decisions to receiver iteration, batched receive, explicit settlement, AutoLockRenewer, sessions, and synchronous or asynchronous clients.</p>
+      <div class="badge-row"><span class="badge">Python 3.10+</span><span class="badge">azure-servicebus</span><span class="badge">Receiver loop and batch models</span></div>
+    </header>
+    <div class="layout">
+      <main class="content">
+        <section id="setup" class="section-card reveal">
+          <h2>Package, authentication, and client</h2>
+          <p>Install <code>azure-servicebus</code> and <code>azure-identity</code>. Use <code>DefaultAzureCredential</code> locally and managed identity for Azure-hosted workloads. Grant producers <strong>Azure Service Bus Data Sender</strong> and consumers <strong>Azure Service Bus Data Receiver</strong>.</p>
+<pre class="code" data-lang="powershell">python -m pip install azure-servicebus azure-identity</pre>
+<pre class="code" data-lang="python">import os
+
+from azure.identity import DefaultAzureCredential
+from azure.servicebus import ServiceBusClient
+
+fully_qualified_namespace = os.environ["SERVICEBUS_FQNS"]
+credential = DefaultAzureCredential()
+client = ServiceBusClient(fully_qualified_namespace, credential)</pre>
+          <div class="callout"><strong>Production identity:</strong> <code>DefaultAzureCredential</code> can select a workload or managed identity in Azure. Do not store a connection string or access key in source code.</div>
+        </section>
+
+        <section id="send" class="section-card reveal">
+          <h2>Send to a queue</h2>
+<pre class="code" data-lang="python">from datetime import timedelta
+from uuid import uuid4
+
+from azure.servicebus import ServiceBusMessage
+
+with client:
+    with client.get_queue_sender("orders-processing") as sender:
+        message = ServiceBusMessage(
+            '{"orderId":"ORD-123","status":"created"}',
+            message_id=str(uuid4()),
+            correlation_id="order:ORD-123",
+            subject="OrderCreated.v1",
+            content_type="application/json",
+            application_properties={"schemaVersion": 1},
+            time_to_live=timedelta(minutes=30),
+        )
+        sender.send_messages(message)</pre>
+          <p>Reuse a sender context for multiple sends. Pass a list to <code>send_messages</code> only when the encoded batch fits, or use <code>create_message_batch</code> and <code>add_message</code> for size-aware batching.</p>
+        </section>
+
+        <section id="message-fields" class="section-card reveal">
+          <h2>Python message objects and fields</h2>
+          <div class="property-reference" aria-label="Python Service Bus message field mapping">
+            <article class="property-entry"><div class="property-entry-header"><h4>Body</h4><div><span>Input</span><code>str | bytes | iterable</code></div><div><span>Object</span><code>ServiceBusMessage</code></div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>The opaque AMQP body supplied to the message constructor.</p></div><div><h5>Use</h5><p>Encode a stable contract, set <code>content_type</code>, and explicitly decode or deserialize the received body.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>message_id</code></h4><div><span>Type</span>AMQP identifier</div><div><span>Limit</span>128 characters for a string</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>The logical message identity and duplicate-detection key.</p></div><div><h5>Use</h5><p>Prefer a persisted UUID string. Keep it unchanged across retries of the same send and change it for new work.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>correlation_id</code> and <code>subject</code></h4><div><span>Types</span>AMQP identifier, <code>str</code></div><div><span>Purpose</span>Workflow and contract</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>Correlation connects operations; subject names the business message type.</p></div><div><h5>Use</h5><p>Use language-neutral values such as <code>order:ORD-123</code> and <code>OrderCreated.v1</code>.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>content_type</code> and <code>application_properties</code></h4><div><span>Types</span><code>str</code>, <code>dict</code></div><div><span>Purpose</span>Format and metadata</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>Content type describes body serialization; application properties contain scalar filterable metadata.</p></div><div><h5>Use</h5><p>Keep application properties small and stable. Some received application-property keys can be bytes depending on AMQP encoding, so normalize deliberately.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>session_id</code>, <code>partition_key</code>, and <code>time_to_live</code></h4><div><span>Types</span><code>str</code>, <code>timedelta</code></div><div><span>Purpose</span>Ordering, affinity, expiration</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>Constructor arguments that select a session, partition affinity, and message lifetime.</p></div><div><h5>Use</h5><p>A session queue requires <code>session_id</code>. Match it to <code>partition_key</code> when both are supplied. TTL is capped by the queue default.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Received-only fields</h4><div><span>Object</span><code>ServiceBusReceivedMessage</code></div><div><span>Owner</span>Service Bus</div></div><div class="property-entry-details"><div><h5>Attributes</h5><p><code>sequence_number</code>, <code>enqueued_time_utc</code>, <code>expires_at_utc</code>, <code>delivery_count</code>, <code>lock_token</code>, <code>locked_until_utc</code>, <code>dead_letter_reason</code>, and <code>dead_letter_error_description</code>.</p></div><div><h5>Use</h5><p>Use for settlement, lock checks, telemetry, and DLQ diagnosis rather than as business identifiers.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="continuous" class="section-card reveal">
+          <h2>Continuous processing with receiver iteration</h2>
+          <p>The Python SDK does not expose a processor-options object or callback processor. Iterate a <code>ServiceBusReceiver</code> for continuous receive and use <code>AutoLockRenewer</code> when work can exceed the entity lock duration.</p>
+<pre class="code" data-lang="python">from azure.servicebus import AutoLockRenewer, ServiceBusReceiveMode
+
+lock_renewer = AutoLockRenewer(max_lock_renewal_duration=300)
+
+try:
+    with client:
+        with client.get_queue_receiver(
+            queue_name="orders",
+            receive_mode=ServiceBusReceiveMode.PEEK_LOCK,
+            auto_lock_renewer=lock_renewer,
+            prefetch_count=0,
+            client_identifier=f"orders-worker:{os.environ.get('COMPUTERNAME', 'local')}",
+        ) as receiver:
+            for message in receiver:
+                try:
+                    process_order(str(message))
+                    receiver.complete_message(message)
+                except PermanentOrderError as error:
+                    receiver.dead_letter_message(
+                        message,
+                        reason="InvalidOrder",
+                        error_description=str(error),
+                    )
+                except Exception:
+                    receiver.abandon_message(message)
+finally:
+    lock_renewer.close()</pre>
+          <p>Settlement is explicit: a successful loop iteration does not automatically complete a message. For cooperative cancellation, break the loop and let the receiver and client context managers close their links and connection.</p>
+        </section>
+
+        <section id="options" class="section-card reveal">
+          <h2>Receiver and lock-renewer mapping</h2>
+          <div class="property-reference" aria-label="Python Service Bus receiver and AutoLockRenewer options">
+            <article class="property-entry"><div class="property-entry-header"><h4>Settlement policy</h4><div><span>API</span>Receiver settlement methods</div><div><span>Default</span>Explicit</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Call <code>complete_message</code>, <code>abandon_message</code>, <code>defer_message</code>, or <code>dead_letter_message</code> on the receiver.</p></div><div><h5>Strategy</h5><p>Complete only after durable work succeeds. There is no Python <code>auto_complete_messages</code> receiver option.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Handler concurrency</h4><div><span>API</span>Application-managed</div><div><span>Default</span>Sequential loop</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>The synchronous receiver loop processes one iteration at a time unless your code dispatches work. The SDK has no <code>max_concurrent_calls</code> receiver argument.</p></div><div><h5>Strategy</h5><p>Prefer <code>azure.servicebus.aio</code> with bounded asyncio tasks for I/O-bound concurrency. Preserve the receiver context until every task settles its message.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>auto_lock_renewer</code></h4><div><span>Data type</span><code>AutoLockRenewer | None</code></div><div><span>Default</span><code>None</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Automatically registers received messages, or the session for a session receiver, with a background lock renewer.</p></div><div><h5>Strategy</h5><p>Provide one when processing may exceed the lock duration. Size its worker pool for the number of messages or sessions renewed concurrently.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>max_lock_renewal_duration</code></h4><div><span>Configure on</span><code>AutoLockRenewer</code></div><div><span>Default</span><code>300</code> seconds</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Sets the total automatic renewal period for registered messages or sessions.</p></div><div><h5>Strategy</h5><p>Use a finite duration above expected successful processing time and close the renewer during shutdown.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>prefetch_count</code></h4><div><span>Data type</span><code>int</code></div><div><span>Default</span><code>0</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Caches up to this many messages locally. In PeekLock mode, lock time runs while cached.</p></div><div><h5>Strategy</h5><p>Increase for fast, steady work only. With ReceiveAndDelete, prefetched messages can be lost if the process exits before application code receives them.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>receive_mode</code></h4><div><span>Data type</span><code>ServiceBusReceiveMode</code></div><div><span>Default</span><code>PEEK_LOCK</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Accepts <code>PEEK_LOCK</code> or <code>RECEIVE_AND_DELETE</code>.</p></div><div><h5>Strategy</h5><p>Use <code>PEEK_LOCK</code> for business work. Use <code>RECEIVE_AND_DELETE</code> only when loss after transfer is acceptable.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>sub_queue</code></h4><div><span>Data type</span><code>ServiceBusSubQueue | str | None</code></div><div><span>Default</span><code>None</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Selects the main entity, dead-letter subqueue, or transfer dead-letter subqueue.</p></div><div><h5>Strategy</h5><p>Create a separate receiver with <code>ServiceBusSubQueue.DEAD_LETTER</code> for deliberate recovery.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>client_identifier</code></h4><div><span>Data type</span><code>str | None</code></div><div><span>Default</span>Generated unique value</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Names the receiver in selected errors without affecting routing or message identity.</p></div><div><h5>Strategy</h5><p>Use a role plus unique host or replica suffix.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="receiver" class="section-card reveal">
+          <h2>Batched receiving</h2>
+          <p>Use <code>receive_messages</code> for scheduled jobs, bounded processing cycles, or explicit batch control.</p>
+<pre class="code" data-lang="python">with client:
+    with client.get_queue_receiver(
+        queue_name="orders",
+        receive_mode=ServiceBusReceiveMode.PEEK_LOCK,
+        prefetch_count=0,
+        client_identifier="orders-batch",
+    ) as receiver:
+        messages = receiver.receive_messages(
+            max_message_count=20,
+            max_wait_time=5,
+        )
+        for message in messages:
+            try:
+                process_order(str(message))
+                receiver.complete_message(message)
+            except Exception:
+                receiver.abandon_message(message)</pre>
+          <p>The method returns as soon as messages arrive and a gap occurs, so the list can contain fewer than <code>max_message_count</code>. The receiver also supports <code>peek_messages</code>, <code>receive_deferred_messages</code>, and <code>renew_message_lock</code>.</p>
+        </section>
+
+        <section id="objects" class="section-card reveal">
+          <h2>Choose the Python object</h2>
+          <div class="property-reference" aria-label="Python Service Bus object selection">
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusClient</code></h4><div><span>Creates</span>Senders and receivers</div><div><span>Lifetime</span>Application</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Namespace authentication, retry configuration, and entity-specific factories.</p></div><div><h5>Lifecycle</h5><p>Reuse it and close after spawned senders and receivers.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusReceiver</code></h4><div><span>Create with</span><code>get_queue_receiver</code> or <code>get_subscription_receiver</code></div><div><span>Lifetime</span>Worker or workflow</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Iteration, batch receive, peek, deferral, lock renewal, settlement, sessions, and subqueues.</p></div><div><h5>Lifecycle</h5><p>Use a context manager and settle through the receiver that delivered the message.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>AutoLockRenewer</code></h4><div><span>Creates</span>Background renewal workers</div><div><span>Lifetime</span>Processing workflow</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Automatic renewal of message or session locks.</p></div><div><h5>Lifecycle</h5><p>Share where appropriate, size workers for concurrency, and call <code>close</code>.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>azure.servicebus.aio</code> clients</h4><div><span>Programming model</span><code>asyncio</code></div><div><span>Lifetime</span>Async application</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Non-blocking receive and bounded task concurrency in asynchronous services.</p></div><div><h5>Lifecycle</h5><p>Use <code>async with</code>, await settlement, and await task completion before closing the receiver.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusSender</code></h4><div><span>Create with</span><code>get_queue_sender</code> or <code>get_topic_sender</code></div><div><span>Lifetime</span>Long-lived per entity</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Individual or batched sends, scheduling, and cancellation.</p></div><div><h5>Lifecycle</h5><p>Reuse within a context rather than creating one per message.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Management client</h4><div><span>Package</span><code>azure-mgmt-servicebus</code></div><div><span>Lifetime</span>Administration workflow</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Azure Resource Manager operations on namespaces and entities. The <code>azure-servicebus</code> data SDK does not expose a <code>ServiceBusAdministrationClient</code>.</p></div><div><h5>Lifecycle</h5><p>Keep management operations outside message processing and prefer infrastructure as code for stable topology.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="variants" class="section-card reveal">
+          <h2>Sessions, subscriptions, and dead-letter queues</h2>
+          <ul>
+            <li>For a topic subscription, call <code>get_<wbr>subscription_<wbr>receiver(topic_name, subscription_name, ...)</code>.</li>
+            <li>For one session, pass a specific <code>session_id</code>; to accept the next available session, pass <code>NEXT_AVAILABLE_SESSION</code>.</li>
+            <li>When a session receiver gets an <code>AutoLockRenewer</code>, the renewer applies to the session lock rather than each message lock.</li>
+            <li>For dead-letter recovery, pass <code>sub_queue=ServiceBusSubQueue.<wbr>DEAD_LETTER</code> to a separate receiver.</li>
+          </ul>
+          <p><strong>References:</strong> <a href="https://learn.microsoft.com/python/api/azure-servicebus/azure.servicebus.servicebusclient?view=azure-python">client factory methods</a>, <a href="https://learn.microsoft.com/python/api/azure-servicebus/azure.servicebus.servicebusreceiver?view=azure-python">receiver API</a>, and <a href="https://learn.microsoft.com/python/api/azure-servicebus/azure.servicebus.autolockrenewer?view=azure-python">AutoLockRenewer</a>.</p>
+        </section>
+
+        <nav class="pager" aria-label="Reference pagination"><a class="prev" href="../javascript/queue-processing.html"><small>Previous</small><strong>&lt;- JavaScript / TypeScript</strong></a><a class="next" href="../../topics-subscriptions.html"><small>Next</small><strong>Topics and Subscriptions -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#setup">Package and authentication</a><a href="#send">Send to a queue</a><a href="#message-fields">Message fields</a><a href="#continuous">Continuous receive</a><a href="#options">Option mapping</a><a href="#receiver">Batch receiver</a><a href="#objects">Object guide</a><a href="#variants">Sessions and DLQ</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

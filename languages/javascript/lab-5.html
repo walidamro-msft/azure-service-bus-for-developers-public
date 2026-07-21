@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 5: Serverless Integration - JavaScript Labs</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="javascript">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../javascript.html">JavaScript labs</a><span class="sep">/</span><span>Lab 5</span></nav>
+    <header class="hero"><h1>Lab 5 - Scale orders from HTTP to storage</h1><p class="subtitle">Build and test a complete Node.js serverless path through Functions, Service Bus, Event Grid, Logic Apps, and Table Storage.</p><div class="badge-row"><span class="badge">90 minutes</span><span class="badge">Node.js 20 Function</span><span class="badge">Serverless integration</span></div></header>
+    <div class="layout">
+      <main class="content">
+        <section id="case-study" class="section-card reveal">
+          <h2>Case study: absorb a checkout surge</h2>
+          <p><strong>Flow:</strong> Azure Load Testing calls an HTTP-triggered Node.js Function. The Function sends an order to <code>orders</code>. When no receiver is active, Service Bus emits an Event Grid notification. A Logic App handles that notification, drains available messages with peek-lock, writes rows to Azure Table Storage, and completes each message.</p>
+<pre class="mermaid">flowchart LR
+  ALT[Azure Load Testing] -- HTTP POST --&gt; FN[Node.js Function producer]
+  FN -- managed identity --&gt; SB[Service Bus orders queue]
+  SB -- queue has messages event --&gt; EG[Event Grid]
+  EG -- trigger --&gt; LA[Logic App consumer]
+  LA -- receive and complete --&gt; SB
+  LA -- upsert order --&gt; TS[Table Storage]</pre>
+          <p><strong>Outcome:</strong> Load-test an HTTP endpoint, buffer accepted orders, wake a serverless consumer, and verify that every unique order becomes a table row.</p>
+
+          <h3 id="provision">1. Provision the supporting resources</h3>
+          <p>Reuse <code>rg-sb-workshop</code>, the Service Bus namespace, and the <code>orders</code> queue from Lab 1. Do not create another namespace or queue. If <code>orders</code> is missing, return to Lab 1 and create it before continuing. The Function uses Flex Consumption, Node.js 20, Functions runtime v4, and Application Insights.</p>
+          <h4>Option A: Azure portal</h4>
+          <ol>
+            <li>In the Azure portal, create a <strong>Storage account</strong> in <code>rg-sb-workshop</code>. Choose a unique name, the same region as the workshop namespace, <strong>Standard</strong> performance, and <strong>Locally-redundant storage (LRS)</strong>.</li>
+            <li>Open the storage account, select <strong>Storage browser &gt; Tables &gt; Add table</strong>, and create a table named <code>Orders</code>.</li>
+            <li>Create a <strong>Function App</strong> in <code>rg-sb-workshop</code>. Select <strong>Flex Consumption</strong>, the same region, <strong>Node.js 20</strong>, and the storage account you just created. Enter a globally unique app name such as <code>func-sb-&lt;unique&gt;</code>.</li>
+            <li>Open the Function App, select <strong>Settings &gt; Identity</strong>, turn the system-assigned identity <strong>On</strong>, and save.</li>
+            <li>Open the Lab 1 Service Bus namespace and copy its <strong>Host name</strong> from the <strong>Overview</strong> page, for example <code>sb-contoso-12345.servicebus.windows.net</code>. Do not include <code>https://</code>, a trailing slash, or <code>/orders</code>.</li>
+            <li>Return to the Function App. Under <strong>Settings &gt; Environment variables</strong>, add <code>SERVICEBUS_FQNS</code> and paste that Host name as its value, then apply the change.</li>
+            <li>Open the Service Bus namespace and select <strong>Access control (IAM) &gt; Add role assignment</strong>. Assign <strong>Azure Service Bus Data Sender</strong> to the Function App's managed identity.</li>
+            <li>Create a <strong>Logic App (Consumption)</strong> in <code>rg-sb-workshop</code>, using a unique name such as <code>logic-sb-orders-&lt;unique&gt;</code>. Open <strong>Identity</strong>, enable its system-assigned identity, and save.</li>
+            <li>On the Service Bus namespace, assign <strong>Azure Service Bus Data Receiver</strong> to the Logic App's managed identity. On the storage account, assign <strong>Storage Table Data Contributor</strong> to the same identity.</li>
+          </ol>
+          <h4>Option B: Azure CLI</h4>
+<pre class="code" data-lang="powershell">$resourceGroup = "rg-sb-workshop"
+$namespace = "&lt;Lab-1-namespace-name&gt;"
+$storage = "stsb$((Get-Random -Maximum 999999).ToString('000000'))"
+$functionApp = "func-sb-$((Get-Random -Maximum 99999).ToString('00000'))"
+$logicApp = "logic-sb-orders-$((Get-Random -Maximum 99999).ToString('00000'))"
+
+az storage account create --resource-group $resourceGroup --name $storage --location eastus --sku Standard_LRS
+az storage table create --account-name $storage --name Orders --auth-mode login
+az functionapp create --resource-group $resourceGroup --name $functionApp --storage-account $storage --flexconsumption-location eastus --runtime node --runtime-version 20
+az functionapp identity assign --resource-group $resourceGroup --name $functionApp
+
+$namespaceId = az servicebus namespace show --resource-group $resourceGroup --name $namespace --query id -o tsv
+$functionPrincipal = az functionapp identity show --resource-group $resourceGroup --name $functionApp --query principalId -o tsv
+az role assignment create --assignee-object-id $functionPrincipal --assignee-principal-type ServicePrincipal --role "Azure Service Bus Data Sender" --scope $namespaceId
+az functionapp config appsettings set --resource-group $resourceGroup --name $functionApp --settings SERVICEBUS_FQNS="$namespace.servicebus.windows.net"
+
+az logic workflow create --resource-group $resourceGroup --location eastus --name $logicApp --definition '{"$schema":"https://schema.management.azure.com/schemas/2016-06-01/workflowdefinition.json#","contentVersion":"1.0.0.0","parameters":{},"triggers":{},"actions":{},"outputs":{}}'
+az logic workflow identity assign --resource-group $resourceGroup --name $logicApp
+$logicPrincipal = az logic workflow identity show --resource-group $resourceGroup --name $logicApp --query principalId -o tsv
+$storageId = az storage account show --resource-group $resourceGroup --name $storage --query id -o tsv
+az role assignment create --assignee-object-id $logicPrincipal --assignee-principal-type ServicePrincipal --role "Azure Service Bus Data Receiver" --scope $namespaceId
+az role assignment create --assignee-object-id $logicPrincipal --assignee-principal-type ServicePrincipal --role "Storage Table Data Contributor" --scope $storageId</pre>
+          <div class="callout"><strong>Note:</strong> Role assignments can take several minutes to propagate. Service Bus access is passwordless: local tools use <code>DefaultAzureCredential</code>, and both cloud components use managed identity.</div>
+
+          <h3 id="function-producer">2. Create, test, and deploy the Function producer</h3>
+<pre class="code" data-lang="powershell">mkdir lab5-function
+cd lab5-function
+func init . --worker-runtime node --language javascript --model V4
+func new --name SubmitOrder --template "HTTP trigger" --authlevel function
+npm install @azure/service-bus @azure/identity</pre>
+          <p>Replace <code>src/functions/SubmitOrder.js</code> with:</p>
+<pre class="code" data-lang="javascript">const { app } = require("@azure/functions");
+const { ServiceBusClient } = require("@azure/service-bus");
+const { DefaultAzureCredential } = require("@azure/identity");
+
+const fqns = process.env.SERVICEBUS_FQNS;
+if (!fqns) throw new Error("Set SERVICEBUS_FQNS first.");
+
+const client = new ServiceBusClient(fqns, new DefaultAzureCredential());
+const sender = client.createSender("orders");
+
+app.http("SubmitOrder", {
+  methods: ["POST"],
+  authLevel: "function",
+  handler: async (request, context) =&gt; {
+    const order = await request.json();
+    if (!order?.orderId) {
+      return { status: 400, jsonBody: { error: "orderId is required" } };
+    }
+
+    await sender.sendMessages({
+      body: order,
+      messageId: String(order.orderId),
+      subject: "OrderCreated",
+      contentType: "application/json"
+    });
+    context.log(`Accepted ${order.orderId}`);
+    return { status: 202, jsonBody: { orderId: order.orderId } };
+  }
+});</pre>
+          <p>Create <code>local.settings.json</code> for local execution. This file is excluded from deployment by the Functions tooling.</p>
+<pre class="code" data-lang="json">{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "SERVICEBUS_FQNS": "YOUR-NAMESPACE.servicebus.windows.net"
+  }
+}</pre>
+<pre class="code" data-lang="powershell"># Terminal 1: start Azurite, then the Function
+azurite
+func start
+
+# Terminal 2: verify the local HTTP-to-queue path
+$body = @{ orderId = "LOCAL-001"; product = "AZ-BOOK"; quantity = 1 } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:7071/api/SubmitOrder -ContentType application/json -Body $body
+
+# Publish after the local request returns 202
+func azure functionapp publish $functionApp</pre>
+
+          <h3 id="cloud-flow">3. Configure Event Grid and the Logic App consumer</h3>
+          <ol>
+            <li>Open the Logic App designer and choose the <strong>When a resource event occurs</strong> Event Grid trigger. Select the current subscription, <code>rg-sb-workshop</code>, the Service Bus namespace resource, and event type <code>Microsoft.ServiceBus.ActiveMessagesAvailableWithNoListeners</code>.</li>
+            <li>Add a trigger condition so only the queue is handled: <code>@endsWith(triggerBody()?['subject'], '/queues/orders')</code>. Saving the workflow creates the Event Grid subscription on the namespace.</li>
+            <li>Add an <strong>Until</strong> loop with a Boolean variable named <code>queueEmpty</code>, initially <code>false</code>. Set the loop condition to <code>@equals(variables('queueEmpty'), true)</code>.</li>
+            <li>Inside the loop, use the Service Bus connector with managed identity to <strong>Receive messages from a queue (peek-lock)</strong>. Select <code>orders</code>, request one message, and set a short timeout.</li>
+            <li>If no message is returned, set <code>queueEmpty</code> to <code>true</code>. Otherwise parse the JSON body, then use the Azure Table Storage connector with managed identity to insert or replace an entity in <code>Orders</code>. Set <code>PartitionKey</code> to <code>orders</code>, <code>RowKey</code> to <code>orderId</code>, and include the message body fields.</li>
+            <li>After the table write succeeds, use the Service Bus connector to <strong>Complete the message</strong> with the lock token from the receive action. Configure failure handling so a failed table write does not complete the message.</li>
+          </ol>
+          <div class="callout"><strong>Important:</strong> Event Grid is a wake-up signal, not one event per message, and it does not contain the message body. Stop every console receiver before testing so Service Bus emits the no-listener event; the Logic App must drain the queue until receive returns no message.</div>
+
+          <h3 id="load-test">4. Run the load test</h3>
+<pre class="code" data-lang="powershell">$hostName = az functionapp show --resource-group $resourceGroup --name $functionApp --query defaultHostName -o tsv
+$functionKey = az functionapp function keys list --resource-group $resourceGroup --name $functionApp --function-name SubmitOrder --query default -o tsv
+$env:FUNCTION_URL = "https://$hostName/api/SubmitOrder"
+$env:FUNCTION_KEY = $functionKey
+
+# Cloud smoke test
+$body = @{ orderId = "CLOUD-001"; product = "AZ-BOOK"; quantity = 1 } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$env:FUNCTION_URL?code=$env:FUNCTION_KEY" -ContentType application/json -Body $body</pre>
+          <p>Save this k6 script as <code>load-test.js</code> and upload it to an Azure Load Testing test. Add <code>FUNCTION_URL</code> as an environment variable and <code>FUNCTION_KEY</code> as a secret.</p>
+<pre class="code" data-lang="javascript">import http from "k6/http";
+import { check } from "k6";
+
+export const options = { vus: 20, duration: "60s" };
+
+export default function () {
+  const orderId = `LOAD-${__VU}-${__ITER}`;
+  const response = http.post(
+    `${__ENV.FUNCTION_URL}?code=${__ENV.FUNCTION_KEY}`,
+    JSON.stringify({ orderId, product: "AZ-BOOK", quantity: 1 }),
+    { headers: { "Content-Type": "application/json" } }
+  );
+  check(response, { accepted: result =&gt; result.status === 202 });
+}</pre>
+
+          <h3 id="observe">5. Verify the complete path</h3>
+          <p>Compare the accepted Function request count in Application Insights, queue active-message count, Logic App run history, dead-letter count, and unique Table Storage row count. Increase virtual users until the queue grows and watch it drain after load stops.</p>
+          <p><strong>Expected result:</strong> Local and cloud HTTP calls return <code>202</code>. During the load test, Event Grid starts the Logic App, the queue grows and then returns to zero active messages with no dead letters, and the <code>Orders</code> table contains one row per unique order ID.</p>
+          <p><strong>Production extension:</strong> Use Premium when you need isolated Service Bus capacity and predictable latency; add private endpoints, zone redundancy where available, DLQ alerts, and idempotent storage writes.</p>
+        </section>
+        <section id="references" class="section-card reveal">
+          <h2>References and cleanup</h2>
+          <p>Use the current <a href="https://learn.microsoft.com/javascript/api/overview/azure/service-bus">Azure Service Bus modules for JavaScript</a>, <a href="https://learn.microsoft.com/azure/azure-functions/functions-reference-node">Node.js Functions guide</a>, and <a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-to-event-grid-integration-example">Event Grid integration guide</a>.</p>
+<pre class="code" data-lang="powershell">az group delete --name rg-sb-workshop --yes --no-wait</pre>
+        </section>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-4.html"><small>Previous</small><strong>&lt;- Lab 4</strong></a><a class="next" href="../python.html"><small>Next</small><strong>Python labs -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#function-producer">2. Function producer</a><a href="#cloud-flow">3. Cloud consumer</a><a href="#load-test">4. Load test</a><a href="#observe">5. Verify</a><a href="#references">Cleanup</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Module 5: Deploy with CLI and Bicep</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("sb-runtime-theme");
+      document.documentElement.setAttribute("data-theme", (t === "light" || t === "dark") ? t : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="assets/site.css" />
+</head>
+<body data-root="." data-active="module-4">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><span>Deploy with CLI and Bicep</span></nav>
+    <header class="hero">
+      <h1>Deploy with Azure CLI and Bicep</h1>
+      <p class="subtitle">Move from click-ops to repeatable infrastructure by codifying Service Bus namespaces and entities.</p>
+      <div class="badge-row"><span class="badge">Hands-on</span><span class="badge">~30 min</span><span class="badge">Module 5 of 11</span></div>
+    </header>
+
+    <div class="layout">
+      <main class="content">
+        <section id="cli-basics" class="section-card reveal">
+          <h2>CLI baseline flow</h2>
+<pre class="code" data-lang="bash">az group create --name rg-sb-workshop --location eastus
+
+az servicebus namespace create \
+  --resource-group rg-sb-workshop \
+  --name sb-workshop-demo \
+  --sku Standard
+
+az servicebus queue create \
+  --resource-group rg-sb-workshop \
+  --namespace-name sb-workshop-demo \
+  --name orders-queue</pre>
+        </section>
+
+        <section id="bicep-template" class="section-card reveal">
+          <h2>Bicep template pattern</h2>
+<pre class="code" data-lang="bicep">param location string = resourceGroup().location
+param namespaceName string
+
+resource sb 'Microsoft.ServiceBus/namespaces@2022-10-01-preview' = {
+  name: namespaceName
+  location: location
+  sku: {
+    name: 'Standard'
+    tier: 'Standard'
+  }
+}
+
+resource queue 'Microsoft.ServiceBus/namespaces/queues@2022-10-01-preview' = {
+  name: '${sb.name}/orders-queue'
+  properties: {
+    maxDeliveryCount: 10
+    requiresDuplicateDetection: true
+  }
+}</pre>
+        </section>
+
+        <section id="deployment-commands" class="section-card reveal">
+          <h2>Deploy template</h2>
+<pre class="code" data-lang="bash">az deployment group create \
+  --resource-group rg-sb-workshop \
+  --template-file main.bicep \
+  --parameters namespaceName=sb-workshop-demo</pre>
+          <p>Use one template per environment with parameter files for naming, SKU, and policy options.</p>
+        </section>
+
+        <section id="iac-practice" class="section-card reveal">
+          <h2>IaC practice checklist</h2>
+          <ul>
+            <li>Keep naming and tags parameterized.</li>
+            <li>Enforce diagnostics settings as code where possible.</li>
+            <li>Run what-if before deployment in shared environments.</li>
+            <li>Use CI/CD to validate and apply Bicep templates.</li>
+          </ul>
+        </section>
+
+        <nav class="pager" aria-label="Workshop pagination">
+          <a class="prev" href="deploy-portal.html"><small>Previous</small><strong><- Deploy via Portal</strong></a>
+          <a class="next" href="queues.html"><small>Next</small><strong>Working with Queues -></strong></a>
+        </nav>
+      </main>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>On This Page</h3>
+        <a href="#cli-basics">CLI baseline flow</a>
+        <a href="#bicep-template">Bicep template pattern</a>
+        <a href="#deployment-commands">Deploy template</a>
+        <a href="#iac-practice">IaC practice checklist</a>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

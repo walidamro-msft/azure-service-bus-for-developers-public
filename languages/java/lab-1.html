@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 1: Queue-Based Order Intake - Java Labs</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="java">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../java.html">Java labs</a><span class="sep">/</span><span>Lab 1</span></nav>
+    <header class="hero"><h1>Lab 1 - Queue-based order intake</h1><p class="subtitle">Create a Service Bus queue, then build separate Java producer and receiver applications.</p><div class="badge-row"><span class="badge">60 minutes</span><span class="badge">Two Java apps</span><span class="badge">Queues</span></div></header>
+    <div class="layout">
+      <main class="content">
+        <section id="case-study" class="section-card reveal">
+          <h2>Case study: protect checkout from traffic spikes</h2>
+          <p>Contoso Shop must accept orders even when fulfilment is busy or offline. The checkout producer writes each order to a durable queue, while a separate receiver drains the queue at its own pace.</p>
+<pre class="mermaid">flowchart LR
+  C[Java checkout producer] -- OrderCreated --&gt; Q[orders queue]
+  Q -- competing consumer --&gt; F[Java fulfilment receiver]</pre>
+          <p><strong>Outcome:</strong> Deploy the queue, build two independently runnable Maven applications, send ten orders, and prove that the receiver settles every message.</p>
+        </section>
+        <section id="provision" class="section-card reveal">
+          <h2>1. Provision the queue</h2>
+          <p>Use <strong>Standard</strong> so the same namespace can support topics and sessions in later labs. Local authentication is disabled; your Azure identity receives data-plane access through RBAC.</p>
+          <h3>Option A: Azure portal</h3>
+          <ol>
+            <li>Open the <a href="https://portal.azure.com/#create/Microsoft.ServiceBus.1">Create a Service Bus namespace</a> page.</li>
+            <li>Select your subscription, create or select <code>rg-sb-workshop</code>, enter a globally unique namespace such as <code>sb-contoso-&lt;unique&gt;</code>, choose a region, and select the <strong>Standard</strong> pricing tier.</li>
+            <li>Select <strong>Review + create</strong>, then <strong>Create</strong>. When deployment finishes, open the namespace.</li>
+            <li>Under <strong>Settings</strong>, open <strong>Shared access policies</strong> and disable <strong>Local Authentication</strong>. The applications use Microsoft Entra ID instead of access keys.</li>
+            <li>Under <strong>Entities</strong>, select <strong>Queues</strong> and <strong>+ Queue</strong>. Set the name to <code>orders</code>, set <strong>Max delivery count</strong> to <code>5</code>, keep the other defaults, and select <strong>Create</strong>.</li>
+            <li>Open <strong>Access control (IAM)</strong>, select <strong>Add &gt; Add role assignment</strong>, choose <strong>Azure Service Bus Data Owner</strong>, and assign it to your signed-in user.</li>
+            <li>On the namespace <strong>Overview</strong> page, copy the hostname ending in <code>.servicebus.windows.net</code>. Set that value as <code>SERVICEBUS_FQNS</code> in every terminal used by this lab.</li>
+          </ol>
+          <h3>Option B: Azure CLI</h3>
+<pre class="code" data-lang="powershell">az login
+$suffix = Get-Random -Maximum 99999
+$resourceGroup = "rg-sb-workshop"
+$namespace = "sb-contoso-$suffix"
+az group create --name $resourceGroup --location eastus
+az servicebus namespace create --resource-group $resourceGroup --name $namespace --location eastus --sku Standard --disable-local-auth true
+az servicebus queue create --resource-group $resourceGroup --namespace-name $namespace --name orders --max-delivery-count 5
+$namespaceId = az servicebus namespace show --resource-group $resourceGroup --name $namespace --query id -o tsv
+$userId = az ad signed-in-user show --query id -o tsv
+az role assignment create --assignee $userId --role "Azure Service Bus Data Owner" --scope $namespaceId
+$env:SERVICEBUS_FQNS = "$namespace.servicebus.windows.net"</pre>
+          <div class="callout"><strong>Note:</strong> Complete either Option A or Option B, not both. RBAC may take several minutes to propagate. Both applications read <code>SERVICEBUS_FQNS</code> from the environment.</div>
+        </section>
+        <section id="projects" class="section-card reveal">
+          <h2>2. Create two Maven applications</h2>
+<pre class="code" data-lang="powershell">New-Item -ItemType Directory -Path lab1-queue
+Set-Location lab1-queue
+mvn archetype:generate "-DgroupId=com.contoso.checkout" "-DartifactId=checkout-producer" "-DarchetypeArtifactId=maven-archetype-quickstart" "-DinteractiveMode=false"
+mvn archetype:generate "-DgroupId=com.contoso.fulfilment" "-DartifactId=fulfilment-receiver" "-DarchetypeArtifactId=maven-archetype-quickstart" "-DinteractiveMode=false"</pre>
+          <p>In both generated projects, set <code>maven.compiler.release</code> to <code>17</code>. Add <code>com.azure:azure-messaging-servicebus:7.17.15</code>, <code>com.azure:azure-identity:1.15.3</code>, and <code>org.codehaus.mojo:exec-maven-plugin:3.5.0</code> to each <code>pom.xml</code>.</p>
+<pre class="code" data-lang="xml">&lt;properties&gt;&lt;maven.compiler.release&gt;17&lt;/maven.compiler.release&gt;&lt;/properties&gt;
+&lt;dependencies&gt;
+  &lt;dependency&gt;&lt;groupId&gt;com.azure&lt;/groupId&gt;&lt;artifactId&gt;azure-messaging-servicebus&lt;/artifactId&gt;&lt;version&gt;7.17.15&lt;/version&gt;&lt;/dependency&gt;
+  &lt;dependency&gt;&lt;groupId&gt;com.azure&lt;/groupId&gt;&lt;artifactId&gt;azure-identity&lt;/artifactId&gt;&lt;version&gt;1.15.3&lt;/version&gt;&lt;/dependency&gt;
+&lt;/dependencies&gt;
+&lt;build&gt;&lt;plugins&gt;&lt;plugin&gt;&lt;groupId&gt;org.codehaus.mojo&lt;/groupId&gt;&lt;artifactId&gt;exec-maven-plugin&lt;/artifactId&gt;&lt;version&gt;3.5.0&lt;/version&gt;&lt;/plugin&gt;&lt;/plugins&gt;&lt;/build&gt;</pre>
+        </section>
+        <section id="producer" class="section-card reveal">
+          <h2>3. Build the checkout producer</h2>
+          <p>Replace <code>checkout-producer/src/main/java/com/contoso/checkout/App.java</code> with:</p>
+<pre class="code" data-lang="java">package com.contoso.checkout;
+
+import com.azure.identity.DefaultAzureCredentialBuilder;
+import com.azure.messaging.servicebus.ServiceBusClientBuilder;
+import com.azure.messaging.servicebus.ServiceBusMessage;
+import com.azure.messaging.servicebus.ServiceBusSenderClient;
+
+public class App {
+    public static void main(String[] args) {
+        String fqns = requireEnvironment("SERVICEBUS_FQNS");
+        try (ServiceBusSenderClient sender = new ServiceBusClientBuilder()
+                .fullyQualifiedNamespace(fqns)
+                .credential(new DefaultAzureCredentialBuilder().build())
+                .sender().queueName("orders").buildClient()) {
+            for (int number = 1; number &lt;= 10; number++) {
+                String orderId = "ORD-%03d".formatted(number);
+                String body = "{\"orderId\":\"%s\",\"product\":\"AZ-BOOK\",\"quantity\":%d}".formatted(orderId, number);
+                sender.sendMessage(new ServiceBusMessage(body).setMessageId(orderId)
+                        .setSubject("OrderCreated").setContentType("application/json"));
+                System.out.println("Sent " + orderId);
+            }
+        }
+    }
+    private static String requireEnvironment(String name) {
+        String value = System.getenv(name);
+        if (value == null || value.isBlank()) throw new IllegalStateException("Set " + name + " first.");
+        return value;
+    }
+}</pre>
+        </section>
+        <section id="receiver" class="section-card reveal">
+          <h2>4. Build the fulfilment receiver</h2>
+          <p>Replace <code>fulfilment-receiver/src/main/java/com/contoso/fulfilment/App.java</code> with:</p>
+<pre class="code" data-lang="java">package com.contoso.fulfilment;
+
+import com.azure.identity.DefaultAzureCredentialBuilder;
+import com.azure.messaging.servicebus.ServiceBusClientBuilder;
+import com.azure.messaging.servicebus.ServiceBusProcessorClient;
+import com.azure.messaging.servicebus.models.ServiceBusReceiveMode;
+import java.util.Scanner;
+
+public class App {
+    public static void main(String[] args) {
+        String fqns = requireEnvironment("SERVICEBUS_FQNS");
+        ServiceBusProcessorClient processor = new ServiceBusClientBuilder()
+                .fullyQualifiedNamespace(fqns)
+                .credential(new DefaultAzureCredentialBuilder().build())
+                .processor().queueName("orders")
+                .receiveMode(ServiceBusReceiveMode.PEEK_LOCK).disableAutoComplete()
+                .processMessage(context -&gt; {
+                    System.out.printf("Received %s (delivery %d)%n", context.getMessage().getMessageId(), context.getMessage().getDeliveryCount());
+                    context.complete();
+                })
+                .processError(context -&gt; System.err.println(context.getException().getMessage()))
+                .buildProcessorClient();
+        processor.start();
+        System.out.println("Receiver is running. Press Enter to stop.");
+        new Scanner(System.in).nextLine();
+        processor.close();
+    }
+    private static String requireEnvironment(String name) {
+        String value = System.getenv(name);
+        if (value == null || value.isBlank()) throw new IllegalStateException("Set " + name + " first.");
+        return value;
+    }
+}</pre>
+        </section>
+        <section id="run" class="section-card reveal">
+          <h2>5. Run and verify</h2>
+          <p>Open two PowerShell terminals, set the same <code>SERVICEBUS_FQNS</code> value in each, and run:</p>
+<pre class="code" data-lang="powershell"># Terminal 1
+Set-Location lab1-queue/fulfilment-receiver
+mvn compile exec:java "-Dexec.mainClass=com.contoso.fulfilment.App"
+
+# Terminal 2
+Set-Location lab1-queue/checkout-producer
+mvn compile exec:java "-Dexec.mainClass=com.contoso.checkout.App"</pre>
+          <p><strong>Expected result:</strong> The producer prints ten sent order IDs. The receiver prints those ten IDs and completes them. The queue's active message count returns to zero.</p>
+          <p><strong>Challenge:</strong> Stop the receiver, send another batch, and observe durable buffering. Run two receiver instances and confirm each order is processed by only one competing consumer.</p>
+        </section>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="../java.html"><small>Previous</small><strong>&lt;- Java labs</strong></a><a class="next" href="lab-2.html"><small>Next</small><strong>Lab 2 -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#projects">2. Create apps</a><a href="#producer">3. Producer</a><a href="#receiver">4. Receiver</a><a href="#run">5. Run and verify</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

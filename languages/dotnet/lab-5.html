@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 5: Serverless Integration - .NET Labs</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="dotnet">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../dotnet.html">.NET labs</a><span class="sep">/</span><span>Lab 5</span></nav>
+    <header class="hero"><h1>Lab 5 - Scale orders from HTTP to storage</h1><p class="subtitle">Build and test a complete serverless path through Functions, Service Bus, Event Grid, Logic Apps, and Table Storage.</p><div class="badge-row"><span class="badge">90 minutes</span><span class="badge">Azure Functions</span><span class="badge">Serverless integration</span></div></header>
+    <div class="layout">
+      <main class="content">
+        <section id="case-study" class="section-card reveal">
+          <h2>Case study: absorb a checkout surge</h2>
+          <p><strong>Flow:</strong> Azure Load Testing calls an HTTP-triggered .NET isolated Function. The Function sends an order to <code>orders</code>. When no receiver is active, Service Bus emits an Event Grid notification. A Logic App handles that notification, drains available messages with peek-lock, writes rows to Azure Table Storage, and completes each message.</p>
+<pre class="mermaid">flowchart LR
+  ALT[Azure Load Testing] -- HTTP POST --&gt; FN[.NET Function producer]
+  FN -- managed identity --&gt; SB[Service Bus orders queue]
+  SB -- queue has messages event --&gt; EG[Event Grid]
+  EG -- trigger --&gt; LA[Logic App consumer]
+  LA -- receive and complete --&gt; SB
+  LA -- upsert order --&gt; TS[Table Storage]</pre>
+      <p><strong>Outcome:</strong> Load-test an HTTP endpoint, buffer accepted orders, wake a serverless consumer, and verify that every unique order becomes a table row.</p>
+      <h3 id="provision">1. Provision the supporting resources</h3>
+      <p>Reuse <code>rg-sb-workshop</code>, the Service Bus namespace, and the <code>orders</code> queue from Lab 1. Do not create another namespace or queue. If <code>orders</code> is missing, return to Lab 1 and create it before continuing.</p>
+      <h4>Option A: Azure portal</h4>
+      <ol>
+        <li>In the Azure portal, create a <strong>Storage account</strong> in <code>rg-sb-workshop</code>. Choose a unique name, the same region as the workshop namespace, <strong>Standard</strong> performance, and <strong>Locally-redundant storage (LRS)</strong>.</li>
+        <li>Open the storage account, select <strong>Storage browser &gt; Tables &gt; Add table</strong>, and create a table named <code>Orders</code>.</li>
+        <li>Create a <strong>Function App</strong> in <code>rg-sb-workshop</code>. Select <strong>Consumption</strong> hosting, the same region, <strong>.NET 10 (isolated)</strong> as the runtime stack, and the storage account you just created. Enter a globally unique app name such as <code>func-sb-&lt;unique&gt;</code>.</li>
+        <li>Open the Function App, select <strong>Settings &gt; Identity</strong>, turn the system-assigned identity <strong>On</strong>, and save.</li>
+        <li>Open the Lab 1 Service Bus namespace and copy its <strong>Host name</strong> from the <strong>Overview</strong> page, for example <code>sb-contoso-12345.servicebus.windows.net</code>. Do not include <code>https://</code>, a trailing slash, or <code>/orders</code>.</li>
+        <li>Return to the Function App. Under <strong>Settings &gt; Environment variables</strong>, add <code>SERVICEBUS_FQNS</code> and paste that Host name as its value. Add <code>SERVICEBUS_QUEUE_NAME</code> with the value <code>orders</code>, then apply the changes.</li>
+        <li>Open the Service Bus namespace and select <strong>Access control (IAM) &gt; Add role assignment</strong>. Assign <strong>Azure Service Bus Data Sender</strong> to the Function App's managed identity.</li>
+      </ol>
+      <h4>Option B: Azure CLI</h4>
+  <pre class="code" data-lang="powershell">$resourceGroup = "rg-sb-workshop"
+  $namespace = "&lt;Lab-1-namespace-name&gt;"
+  $storage = "stsb$((Get-Random -Maximum 999999).ToString('000000'))"
+  $functionApp = "func-sb-$((Get-Random -Maximum 99999).ToString('00000'))"
+  $logicApp = "logic-sb-orders"
+
+  az storage account create --resource-group $resourceGroup --name $storage --location eastus --sku Standard_LRS
+  az storage table create --account-name $storage --name Orders --auth-mode login
+  az functionapp create --resource-group $resourceGroup --name $functionApp --storage-account $storage --consumption-plan-location eastus --runtime dotnet-isolated --runtime-version 10 --functions-version 4
+  az functionapp identity assign --resource-group $resourceGroup --name $functionApp
+
+  $functionPrincipal = az functionapp identity show --resource-group $resourceGroup --name $functionApp --query principalId -o tsv
+  $namespaceId = az servicebus namespace show --resource-group $resourceGroup --name $namespace --query id -o tsv
+  az role assignment create --assignee $functionPrincipal --role "Azure Service Bus Data Sender" --scope $namespaceId
+    az functionapp config appsettings set --resource-group $resourceGroup --name $functionApp --settings SERVICEBUS_FQNS="$namespace.servicebus.windows.net" SERVICEBUS_QUEUE_NAME="orders"</pre>
+      <h3 id="function-producer">2. Create and deploy the Function producer</h3>
+  <pre class="code" data-lang="powershell">$functionApp = "&lt;Function-App-name-from-step-1&gt;"
+  mkdir lab5-function
+  cd lab5-function
+  func init Contoso.OrderApi --worker-runtime dotnet-isolated --target-framework net10.0
+  cd Contoso.OrderApi
+  func new --name SubmitOrder --template "HTTP trigger" --authlevel function
+  dotnet add package Azure.Messaging.ServiceBus
+    dotnet add package Azure.Identity</pre>
+      <p>Replace the generated <code>SubmitOrder.cs</code> with this .NET 10 isolated ASP.NET Core integration implementation:</p>
+  <pre class="code" data-lang="csharp">using System.Text.Json;
+  using Azure.Messaging.ServiceBus;
+  using Microsoft.AspNetCore.Http;
+  using Microsoft.AspNetCore.Mvc;
+  using Microsoft.Azure.Functions.Worker;
+  using Microsoft.Extensions.Logging;
+
+  namespace Contoso.OrderApi;
+
+  public class SubmitOrder
+{
+    private readonly ServiceBusSender _sender;
+    private readonly ILogger&lt;SubmitOrder&gt; _logger;
+
+    public SubmitOrder(ServiceBusSender sender, ILogger&lt;SubmitOrder&gt; logger)
+    {
+      _sender = sender;
+      _logger = logger;
+    }
+
+    [Function("SubmitOrder")]
+    public async Task&lt;IActionResult&gt; Run(
+      [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequest request)
+    {
+      using JsonDocument json = await JsonDocument.ParseAsync(request.Body);
+      if (!json.RootElement.TryGetProperty("orderId", out JsonElement orderIdElement) ||
+        string.IsNullOrWhiteSpace(orderIdElement.GetString()))
+      {
+        return new BadRequestObjectResult("Provide a non-empty orderId.");
+      }
+
+      string orderId = orderIdElement.GetString()!;
+      string body = json.RootElement.GetRawText();
+      await _sender.SendMessageAsync(new ServiceBusMessage(body)
+      {
+        MessageId = orderId,
+        Subject = "OrderCreated",
+        ContentType = "application/json"
+      });
+
+      _logger.LogInformation("Accepted order {OrderId}.", orderId);
+      return new AcceptedResult(location: null, value: orderId);
+    }
+}</pre>
+      <p>Replace <code>Program.cs</code> with the following code. It validates both settings at startup and creates one reusable sender for the configured queue:</p>
+  <pre class="code" data-lang="csharp">using Azure.Identity;
+  using Azure.Messaging.ServiceBus;
+  using Microsoft.Azure.Functions.Worker;
+  using Microsoft.Azure.Functions.Worker.Builder;
+  using Microsoft.Extensions.DependencyInjection;
+  using Microsoft.Extensions.Hosting;
+
+  FunctionsApplicationBuilder builder = FunctionsApplication.CreateBuilder(args);
+  builder.ConfigureFunctionsWebApplication();
+
+  builder.Services
+    .AddApplicationInsightsTelemetryWorkerService()
+    .ConfigureFunctionsApplicationInsights();
+
+  string fullyQualifiedNamespace =
+    Environment.GetEnvironmentVariable("SERVICEBUS_FQNS")
+    ?? throw new InvalidOperationException("Set SERVICEBUS_FQNS.");
+  string queueName =
+    Environment.GetEnvironmentVariable("SERVICEBUS_QUEUE_NAME")
+    ?? throw new InvalidOperationException("Set SERVICEBUS_QUEUE_NAME.");
+
+  builder.Services.AddSingleton(_ =&gt;
+    new ServiceBusClient(fullyQualifiedNamespace, new DefaultAzureCredential()));
+  builder.Services.AddSingleton(provider =&gt;
+    provider.GetRequiredService&lt;ServiceBusClient&gt;().CreateSender(queueName));
+
+  builder.Build().Run();</pre>
+      <p>Create or update <code>local.settings.json</code> for local execution. Use the Lab 1 namespace Host name and queue name; do not commit this file.</p>
+  <pre class="code" data-lang="json">{
+    "IsEncrypted": false,
+    "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "SERVICEBUS_FQNS": "sb-contoso-12345.servicebus.windows.net",
+    "SERVICEBUS_QUEUE_NAME": "orders"
+    }
+  }</pre>
+      <p>Build before publishing. For the local send test, your signed-in developer identity also needs <strong>Azure Service Bus Data Sender</strong> on the namespace.</p>
+  <pre class="code" data-lang="powershell">dotnet build
+  func start
+
+  # Run in another terminal after the Function host starts.
+  $body = @{ orderId = "LOCAL-001"; amount = 125 } | ConvertTo-Json
+  Invoke-RestMethod -Method Post -Uri "http://localhost:7071/api/SubmitOrder" -ContentType "application/json" -Body $body
+
+  # Stop the local host, then publish the tested code.
+  func azure functionapp publish $functionApp</pre>
+    <div class="callout"><strong>If publish fails while creating the archive:</strong> A message such as <code>The underlying compression routine could not be loaded correctly</code> occurs after a successful build but before upload. It is a local Azure Functions Core Tools packaging failure, not a C# compilation or Azure authentication failure. First update or repair the current x64 <a href="https://go.microsoft.com/fwlink/?linkid=2174087">Azure Functions Core Tools MSI</a>. You can continue immediately with the manual ZIP deployment below.</div>
+  <pre class="code" data-lang="powershell"># Set these again because PowerShell variables do not carry into a new terminal.
+  $resourceGroup = "rg-sb-workshop"
+  $functionApp = "&lt;Function-App-name-from-step-1&gt;"
+
+  if ([string]::IsNullOrWhiteSpace($resourceGroup) -or $resourceGroup.Contains("&lt;")) {
+    throw "Set resourceGroup to the Function App's resource group."
+  }
+  if ([string]::IsNullOrWhiteSpace($functionApp) -or $functionApp.Contains("&lt;")) {
+    throw "Replace Function-App-name-from-step-1 with the Function App name."
+  }
+
+  # Confirm that the target exists in the active Azure subscription.
+  az functionapp show --resource-group $resourceGroup --name $functionApp --query name -o tsv
+  if ($LASTEXITCODE -ne 0) {
+    throw "Function App not found. Check az account show, resourceGroup, and functionApp."
+  }
+
+  $publishDirectory = Join-Path $PWD "publish"
+  $zipPath = Join-Path $PWD "functionapp.zip"
+
+  Remove-Item $publishDirectory -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+  dotnet publish --configuration Release --output $publishDirectory
+
+  # Create the ZIP without a wrapping publish directory.
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  [System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $publishDirectory,
+    $zipPath,
+    [System.IO.Compression.CompressionLevel]::Optimal,
+    $false)
+
+  # Azure requires host.json at the archive root. Stop before upload if it is missing.
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+  try {
+    $hasRootHostJson = $archive.Entries.FullName -contains "host.json"
+  }
+  finally {
+    $archive.Dispose()
+  }
+
+  if (-not $hasRootHostJson) {
+    throw "Invalid package: host.json is not at the ZIP root."
+  }
+
+  az functionapp deployment source config-zip `
+    --resource-group $resourceGroup `
+    --name $functionApp `
+    --src $zipPath</pre>
+      <h3 id="cloud-flow">3. Configure Event Grid and the Logic App consumer</h3>
+      <p>Event Grid does not receive or forward the Service Bus message body. It wakes the Logic App when messages are available and no receiver is listening; the Logic App then drains <code>orders</code> through the Service Bus connector.</p>
+
+      <h4>Step 3.1: Create the Logic App</h4>
+      <ol>
+        <li>In the Azure portal, select <strong>Create a resource</strong>, search for <strong>Logic App</strong>, and select <strong>Create</strong>.</li>
+        <li>Choose the subscription used for the workshop and resource group <code>rg-sb-workshop</code>. Using the same region as the Service Bus namespace is recommended for lower latency, but Event Grid can deliver to a Logic App in another region. For <strong>Logic App name</strong>, use a descriptive name such as <code>logic-sb-orders-consumer-&lt;initials&gt;</code>. For example, <code>logic-sb-orders-consumer-wa</code>.</li>
+        <li>For this workshop, select <strong>Consumption (Multi-tenant)</strong>. It is the simplest pay-per-execution option and matches the navigation in the remaining steps. <strong>Standard</strong> is also supported; if you use it, create a <strong>Stateful</strong> workflow and select the managed Azure Event Grid connector from the <strong>Shared</strong> connector gallery.</li>
+        <li>Select <strong>Review + create</strong>, then <strong>Create</strong>. If you chose Standard, open the new resource, create a Stateful workflow, and continue the lab inside that workflow's designer.</li>
+        <li>Open the Logic App. Under <strong>Settings &gt; Identity &gt; System assigned</strong>, set <strong>Status</strong> to <strong>On</strong> and select <strong>Save</strong>. Copy the displayed <strong>Object (principal) ID</strong> for troubleshooting.</li>
+      </ol>
+      <div class="callout"><strong>How to choose:</strong> Consumption contains one workflow and is recommended for this lab. Standard hosts one or more workflows and is useful when you need single-tenant hosting, higher throughput, private networking, or multiple workflows. Use a <strong>Stateful</strong> Standard workflow for this lab because it supports managed connector triggers and preserves run history.</div>
+
+      <h4>Step 3.2: Grant the Logic App access</h4>
+      <ol>
+        <li>Open the Lab 1 Service Bus namespace. Select <strong>Access control (IAM) &gt; Add &gt; Add role assignment</strong>.</li>
+        <li>Select <strong>Azure Service Bus Data Receiver</strong>. For <strong>Assign access to</strong>, choose <strong>Managed identity</strong>, select <strong>Logic app</strong>, choose the Logic App created in Step 3.1, and complete the assignment.</li>
+        <li>Open the storage account created in Step 1 and add another role assignment. Assign <strong>Storage Table Data Contributor</strong> to the same Logic App managed identity.</li>
+        <li>Allow several minutes for both assignments to propagate before creating the managed-identity connections.</li>
+      </ol>
+      <div class="callout"><strong>Checkpoint:</strong> On the Logic App's <strong>Identity &gt; Azure role assignments</strong> page, verify that it has Service Bus Data Receiver on the namespace and Storage Table Data Contributor on the storage account.</div>
+
+      <h4>Step 3.3: Add the Event Grid trigger</h4>
+      <ol>
+        <li>Open the Logic App and select <strong>Development Tools &gt; Logic app designer</strong>. Choose <strong>Blank Logic App</strong>.</li>
+        <li>Search for <strong>Azure Event Grid</strong> and select the trigger <strong>When a resource event occurs</strong>. If prompted, create the Event Grid connection by signing in with your workshop Azure account.</li>
+        <li>Set <strong>Subscription</strong> and <strong>Resource Group</strong> to the workshop values. Set <strong>Resource Type</strong> to <code>Microsoft.ServiceBus.Namespaces</code> and <strong>Resource Name</strong> to the Lab 1 namespace.</li>
+        <li>For <strong>Event Type Item</strong>, select <code>Microsoft.ServiceBus.ActiveMessagesAvailableWithNoListeners</code>.</li>
+        <li>Under <strong>Advanced parameters</strong>, add <strong>Suffix Filter</strong> and set it to <code>/queues/orders</code>. This limits the event subscription to the <code>orders</code> queue.</li>
+        <li>Select <strong>Save</strong>. Saving creates the Event Grid event subscription on the Service Bus namespace; you do not need to create a separate system topic.</li>
+        <li>Use the Azure portal search bar to open <strong>Event Grid Subscriptions</strong>. In the current resource-list view, use <strong>Subscription</strong> to select the workshop subscription and <strong>Resource Group</strong> to select <code>rg-sb-workshop</code>. Leave <strong>Location</strong> set to <strong>all</strong>. This view might not show a <strong>Topic Type</strong> filter. If the subscription appears, open it and confirm that the source resource is the Lab 1 Service Bus namespace and the endpoint is the Logic App.</li>
+      </ol>
+      <div class="callout"><strong>Connection versus subscription:</strong> An <code>azureeventgrid</code> entry marked <strong>Connected</strong> under the Logic App's <strong>Connections</strong> page is the API connection used to authenticate the designer. It does not confirm that the trigger created an Event Grid event subscription. Verify the generated subscription separately in <strong>Event Grid Subscriptions</strong> or with the Azure CLI command below.</div>
+      <p>If the Event Grid subscription does not appear after applying the subscription and resource-group filters, check the following items:</p>
+      <ol>
+        <li>Confirm that you are editing either the Consumption Logic App's designer or an enabled <strong>Stateful</strong> workflow in a Standard Logic App. For Standard, use the Azure Event Grid managed connector from the <strong>Shared</strong> connector gallery.</li>
+        <li>Return to the designer and open <strong>When a resource event occurs</strong>. Confirm that the Event Grid connection is signed in, the resource type is <code>Microsoft.ServiceBus.Namespaces</code>, the Lab 1 namespace is selected, and the event type is <code>Microsoft.ServiceBus.ActiveMessagesAvailableWithNoListeners</code>.</li>
+        <li>Select <strong>Save</strong> and resolve any error shown by the designer. Publishing alone does not create the subscription when the trigger configuration is incomplete.</li>
+        <li>Confirm that the signed-in account can create event subscriptions on the Service Bus namespace. <strong>Contributor</strong>, <strong>Owner</strong>, or <strong>EventGrid EventSubscription Contributor</strong> at the namespace or a parent scope provides this management-plane permission.</li>
+        <li>Wait about a minute, then refresh <strong>Event Grid Subscriptions</strong>. Confirm that <strong>Subscription</strong> and <strong>Resource Group</strong> match the workshop and that <strong>Location</strong> is set to <strong>all</strong>.</li>
+      </ol>
+      <p>The Logic App and Service Bus namespace can be in different regions; a region mismatch does not prevent creation of this webhook event subscription. You can also verify the subscription from Azure Cloud Shell:</p>
+      <pre class="code" data-lang="powershell">$resourceGroup = "rg-sb-workshop"
+$namespace = "&lt;your-lab-1-namespace&gt;"
+$namespaceId = az servicebus namespace show `
+  --resource-group $resourceGroup `
+  --name $namespace `
+  --query id `
+  --output tsv
+
+az eventgrid event-subscription list `
+  --source-resource-id $namespaceId `
+  --output table</pre>
+      <div class="callout"><strong>Important:</strong> Stop every console receiver before testing. Service Bus raises this event only when active messages are available and no receiver is actively listening.</div>
+
+      <h4>Step 3.4: Build the queue-drain loop</h4>
+      <ol>
+        <li>After the trigger, add <strong>Variables &gt; Initialize variable</strong>. Name it <code>queueEmpty</code>, choose type <strong>Boolean</strong>, and set its initial value to <code>false</code>.</li>
+        <li>Add <strong>Control &gt; Until</strong>. Set its exit condition to <code>@equals(variables('queueEmpty'), true)</code>. In <strong>Change limits</strong>, use a timeout of <code>PT5M</code> and a count of <code>500</code>.</li>
+        <li>Inside the Until loop, add the Azure Service Bus action <strong>Get messages from a queue (peek-lock)</strong>. Create the connection with <strong>Authentication type: Managed Identity</strong>. For <strong>Namespace Endpoint</strong>, enter <code>sb://&lt;namespace&gt;.servicebus.windows.net/</code>. Choose queue <code>orders</code> and set <strong>Maximum message count</strong> to <code>20</code>.</li>
+        <li>Add a <strong>Condition</strong>. In its expression editor, use <code>@empty(body('Get_messages_from_a_queue_(peek-lock)'))</code>. If your action was renamed, insert its <strong>Body</strong> from dynamic content and apply the <code>empty</code> function instead of typing the generated action name.</li>
+        <li>In the <strong>True</strong> branch, add <strong>Set variable</strong> and set <code>queueEmpty</code> to <code>true</code>.</li>
+        <li>In the <strong>False</strong> branch, add <strong>Control &gt; For each</strong>. For its input, select <strong>Body</strong> from <strong>Get messages from a queue (peek-lock)</strong>. The connector returns an array even when the batch contains one message.</li>
+        <li>Inside <strong>For each</strong>, add <strong>Data Operations &gt; Parse JSON</strong>. For <strong>Content</strong>, use <code>@base64ToString(item()?['ContentData'])</code>. Generate the schema from <code>{"orderId":"ORDER-001","amount":125}</code>.</li>
+      </ol>
+
+      <h4>Step 3.5: Persist and settle each message</h4>
+      <ol>
+        <li>Still inside <strong>For each</strong>, add <strong>Azure Table Storage &gt; Insert or Replace Entity (V2)</strong>. Do not select the deprecated action because managed identity works only with V2 Table actions.</li>
+        <li>Create the Table connection with <strong>Authentication type: Managed Identity</strong>. For the storage endpoint, use <code>https://&lt;storage-account&gt;.table.core.windows.net/</code>; you can copy it from the storage account's <strong>Settings &gt; Endpoints &gt; Table service</strong>.</li>
+        <li>Select table <code>Orders</code>. Set <code>Partition Key</code> to <code>orders</code>, set <code>Row Key</code> to the parsed <code>orderId</code>, and map the remaining parsed order fields into the entity.</li>
+        <li>After the table action and still inside <strong>For each</strong>, add <strong>Azure Service Bus &gt; Complete the message in a queue</strong>. Reuse the managed-identity connection, select <code>orders</code>, and set <strong>Lock token of the message</strong> to <code>@item()?['LockToken']</code>.</li>
+        <li>Open <strong>Configure run after</strong> for the complete action and leave only <strong>is successful</strong> selected for the table write. A failed storage operation must not complete the message.</li>
+        <li>Select <strong>Save</strong>. The designer should show no invalid parameters or disconnected actions.</li>
+      </ol>
+      <div class="callout"><strong>Checkpoint:</strong> The successful path is Event Grid trigger -> initialize <code>queueEmpty</code> -> Until -> peek-lock batch receive -> For each -> decode and parse -> V2 table upsert -> complete. The empty receive path sets <code>queueEmpty</code> to <code>true</code> and exits the loop.</div>
+          <h3 id="load-test">4. Run the load test</h3>
+<pre class="code" data-lang="javascript">import http from 'k6/http';
+import { check } from 'k6';
+export const options = { vus: 20, duration: '60s' };
+export default function () {
+  const id = `${__VU}-${__ITER}`;
+  const response = http.post(__ENV.FUNCTION_URL, JSON.stringify({ orderId: id, amount: 125 }),
+    { headers: { 'Content-Type': 'application/json', 'x-functions-key': __ENV.FUNCTION_KEY } });
+  check(response, { accepted: r =&gt; r.status === 202 });
+}</pre>
+          <h3 id="observe">5. Verify the complete path</h3>
+          <p>Compare the accepted Function request count, queue active-message count, Logic App run history, dead-letter count, and unique Table Storage row count. Increase virtual users until the queue grows and watch it drain after load stops.</p>
+          <p><strong>Expected result:</strong> HTTP calls return <code>202</code>, Event Grid starts the Logic App, the queue returns to zero active messages with no dead letters, and the <code>Orders</code> table contains one row per unique order ID.</p>
+          <p><strong>Production extension:</strong> Use Premium when you need isolated capacity and predictable latency; use private endpoints, zone redundancy where available, Application Insights, DLQ alerts, and idempotent storage writes.</p>
+        </section>
+        <section id="references" class="section-card reveal">
+          <h2>References and cleanup</h2>
+          <p>Samples follow the current <a href="https://learn.microsoft.com/dotnet/api/overview/azure/service-bus">Azure Service Bus SDK for .NET</a>, <a href="https://learn.microsoft.com/azure/azure-functions/functions-bindings-service-bus">Service Bus bindings for Azure Functions</a>, and <a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-to-event-grid-integration-example">Service Bus to Event Grid integration</a>. Check NuGet for the current stable package version when you begin the lab.</p>
+<pre class="code" data-lang="bash">az group delete --name rg-sb-workshop --yes --no-wait</pre>
+        </section>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-4.html"><small>Previous</small><strong>&lt;- Lab 4</strong></a><a class="next" href="../java.html"><small>Next</small><strong>Java labs -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#function-producer">2. Function producer</a><a href="#cloud-flow">3. Cloud consumer</a><a href="#load-test">4. Load test</a><a href="#observe">5. Verify</a><a href="#references">Cleanup</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

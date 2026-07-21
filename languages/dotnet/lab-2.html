@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 2: Topic Fan-out - .NET Labs</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="dotnet">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../dotnet.html">.NET labs</a><span class="sep">/</span><span>Lab 2</span></nav>
+    <header class="hero"><h1>Lab 2 - Publish one event to two subscribers</h1><p class="subtitle">Create a topic, build a publisher console app, and run a subscriber app for two independent subscriptions.</p><div class="badge-row"><span class="badge">60 minutes</span><span class="badge">Three processes</span><span class="badge">Topics</span></div></header>
+    <div class="layout">
+      <main class="content">
+        <section id="case-study" class="section-card reveal">
+          <h2>Case study: notify inventory and customer care</h2>
+          <p>When checkout confirms an order, inventory must reserve stock and customer care must prepare a confirmation. The publisher sends one <code>OrderCreated</code> event. Service Bus copies it into two durable subscriptions so both business capabilities receive the event independently.</p>
+<pre class="mermaid">flowchart LR
+  P[Order publisher] -- one message --&gt; T[order-events topic]
+  T -- copy --&gt; I[inventory subscription]
+  T -- copy --&gt; C[customer-care subscription]
+  I -- receive --&gt; SI[Subscriber instance: inventory]
+  C -- receive --&gt; SC[Subscriber instance: customer-care]</pre>
+          <div class="callout"><strong>Important:</strong> Run each receiver against a different subscription. Two receivers using the same subscription are competing consumers and would split messages instead of both receiving a copy.</div>
+        </section>
+
+        <section id="provision" class="section-card reveal">
+          <h2>1. Provision the topic and subscriptions</h2>
+          <p>Reuse the namespace and PowerShell variables from Lab 1.</p>
+          <h3>Option A: Azure portal</h3>
+          <ol>
+            <li>In the Azure portal, open the Service Bus namespace created in Lab 1.</li>
+            <li>Under <strong>Entities</strong>, select <strong>Topics</strong>, select <strong>+ Topic</strong>, enter <code>order-events</code>, keep the defaults, and select <strong>Create</strong>.</li>
+            <li>Open the <code>order-events</code> topic. Under <strong>Entities</strong>, select <strong>Subscriptions</strong>, then select <strong>+ Subscription</strong>.</li>
+            <li>Create a subscription named <code>inventory</code> and keep the default settings.</li>
+            <li>Repeat the preceding step to create a second subscription named <code>customer-care</code>.</li>
+            <li>Confirm that both subscriptions appear under the topic. You will use this namespace hostname in <code>appsettings.json</code> for both applications.</li>
+          </ol>
+          <h3>Option B: Azure CLI</h3>
+<pre class="code" data-lang="powershell">az servicebus topic create --resource-group $resourceGroup --namespace-name $namespace --name order-events
+az servicebus topic subscription create --resource-group $resourceGroup --namespace-name $namespace --topic-name order-events --name inventory
+az servicebus topic subscription create --resource-group $resourceGroup --namespace-name $namespace --topic-name order-events --name customer-care</pre>
+          <p><strong>Checkpoint:</strong> Complete either Option A or Option B, not both. The portal shows one topic and two subscriptions, each with an active message count of zero.</p>
+        </section>
+
+        <section id="projects" class="section-card reveal">
+          <h2>2. Create publisher and subscriber applications</h2>
+<pre class="code" data-lang="powershell">mkdir lab2-topic
+cd lab2-topic
+dotnet new sln --name Contoso.TopicLab
+dotnet new console --name Contoso.Orders.Publisher
+dotnet new console --name Contoso.Events.Subscriber
+dotnet sln add Contoso.Orders.Publisher Contoso.Events.Subscriber
+
+dotnet add Contoso.Orders.Publisher package Azure.Messaging.ServiceBus
+dotnet add Contoso.Orders.Publisher package Microsoft.Extensions.Configuration.Json
+dotnet add Contoso.Events.Subscriber package Azure.Messaging.ServiceBus
+dotnet add Contoso.Events.Subscriber package Microsoft.Extensions.Configuration.Json</pre>
+          <h3>Publisher settings</h3>
+          <p>Create <code>Contoso.Orders.Publisher/appsettings.json</code>:</p>
+<pre class="code" data-lang="json">{
+  "ServiceBus": {
+    "FullyQualifiedNamespace": "sb-contoso-12345.servicebus.windows.net",
+    "SasKeyName": "ProducerSAS",
+    "SasKey": "&lt;ProducerSAS-primary-key&gt;",
+    "TopicName": "order-events"
+  }
+}</pre>
+          <h3>Subscriber settings</h3>
+          <p>Create <code>Contoso.Events.Subscriber/appsettings.json</code>:</p>
+<pre class="code" data-lang="json">{
+  "ServiceBus": {
+    "FullyQualifiedNamespace": "sb-contoso-12345.servicebus.windows.net",
+    "SasKeyName": "ReceiverSAS",
+    "SasKey": "&lt;ReceiverSAS-primary-key&gt;",
+    "TopicName": "order-events"
+  }
+}</pre>
+          <p>In both project files, add this item group inside the root <code>&lt;Project&gt;</code> element so <code>appsettings.json</code> is copied beside the compiled application:</p>
+<pre class="code" data-lang="xml">&lt;ItemGroup&gt;
+  &lt;None Update="appsettings.json"&gt;
+    &lt;CopyToOutputDirectory&gt;PreserveNewest&lt;/CopyToOutputDirectory&gt;
+  &lt;/None&gt;
+&lt;/ItemGroup&gt;</pre>
+          <div class="callout"><strong>Important:</strong> This lab uses <code>appsettings.json</code> for Service Bus configuration and does not use environment variables. Keep both settings files local and add <code>Contoso.Orders.Publisher/appsettings.json</code> and <code>Contoso.Events.Subscriber/appsettings.json</code> to <code>.gitignore</code>.</div>
+          <p>The subscriber accepts a subscription name as a command-line argument, so the same application can run as two independent business consumers.</p>
+        </section>
+
+        <section id="publisher" class="section-card reveal">
+          <h2>3. Build the order publisher</h2>
+          <p>Replace <code>Contoso.Orders.Publisher/Program.cs</code> with:</p>
+<pre class="code" data-lang="csharp">using Azure;
+using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Configuration;
+using System.Text.Json;
+
+IConfiguration configuration = new ConfigurationBuilder()
+  .SetBasePath(AppContext.BaseDirectory)
+  .AddJsonFile("appsettings.json", optional: false)
+  .Build();
+
+string fqns = configuration["ServiceBus:FullyQualifiedNamespace"]
+  ?? throw new InvalidOperationException("Set ServiceBus:FullyQualifiedNamespace in appsettings.json.");
+string sasKeyName = configuration["ServiceBus:SasKeyName"]
+  ?? throw new InvalidOperationException("Set ServiceBus:SasKeyName in appsettings.json.");
+string sasKey = configuration["ServiceBus:SasKey"]
+  ?? throw new InvalidOperationException("Set ServiceBus:SasKey in appsettings.json.");
+string topicName = configuration["ServiceBus:TopicName"]
+  ?? throw new InvalidOperationException("Set ServiceBus:TopicName in appsettings.json.");
+
+var credential = new AzureNamedKeyCredential(sasKeyName, sasKey);
+await using var client = new ServiceBusClient(fqns, credential);
+await using ServiceBusSender sender = client.CreateSender(topicName);
+
+string orderId = $"ORD-{DateTime.UtcNow:HHmmss}";
+var message = new ServiceBusMessage(JsonSerializer.Serialize(new
+{
+    orderId,
+    product = "AZ-BOOK",
+    quantity = 2
+}))
+{
+    MessageId = orderId,
+    Subject = "OrderCreated",
+    ContentType = "application/json"
+};
+
+await sender.SendMessageAsync(message);
+Console.WriteLine($"Published one event for {orderId}");</pre>
+        </section>
+
+        <section id="subscriber" class="section-card reveal">
+          <h2>4. Build the reusable subscriber</h2>
+          <p>Replace <code>Contoso.Events.Subscriber/Program.cs</code> with:</p>
+<pre class="code" data-lang="csharp">using Azure;
+using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Configuration;
+
+if (args.Length != 1)
+    throw new ArgumentException("Pass inventory or customer-care.");
+
+string subscriptionName = args[0];
+IConfiguration configuration = new ConfigurationBuilder()
+  .SetBasePath(AppContext.BaseDirectory)
+  .AddJsonFile("appsettings.json", optional: false)
+  .Build();
+
+string fqns = configuration["ServiceBus:FullyQualifiedNamespace"]
+  ?? throw new InvalidOperationException("Set ServiceBus:FullyQualifiedNamespace in appsettings.json.");
+string sasKeyName = configuration["ServiceBus:SasKeyName"]
+  ?? throw new InvalidOperationException("Set ServiceBus:SasKeyName in appsettings.json.");
+string sasKey = configuration["ServiceBus:SasKey"]
+  ?? throw new InvalidOperationException("Set ServiceBus:SasKey in appsettings.json.");
+string topicName = configuration["ServiceBus:TopicName"]
+  ?? throw new InvalidOperationException("Set ServiceBus:TopicName in appsettings.json.");
+
+var credential = new AzureNamedKeyCredential(sasKeyName, sasKey);
+await using var client = new ServiceBusClient(fqns, credential);
+ServiceBusProcessor processor = client.CreateProcessor(
+  topicName,
+    subscriptionName,
+    new ServiceBusProcessorOptions { AutoCompleteMessages = false });
+
+processor.ProcessMessageAsync += async eventArgs =&gt;
+{
+    Console.WriteLine($"[{subscriptionName}] received {eventArgs.Message.MessageId}: {eventArgs.Message.Body}");
+    await eventArgs.CompleteMessageAsync(eventArgs.Message);
+};
+processor.ProcessErrorAsync += eventArgs =&gt;
+{
+    Console.Error.WriteLine($"[{subscriptionName}] {eventArgs.Exception.Message}");
+    return Task.CompletedTask;
+};
+
+await processor.StartProcessingAsync();
+Console.WriteLine($"Listening on {subscriptionName}. Press Enter to stop.");
+Console.ReadLine();
+await processor.StopProcessingAsync();</pre>
+        </section>
+
+        <section id="run" class="section-card reveal">
+          <h2>5. Run three processes and verify fan-out</h2>
+<pre class="code" data-lang="powershell"># Terminal 1
+dotnet run --project Contoso.Events.Subscriber -- inventory
+
+# Terminal 2
+dotnet run --project Contoso.Events.Subscriber -- customer-care
+
+# Terminal 3
+dotnet run --project Contoso.Orders.Publisher</pre>
+          <p><strong>Expected result:</strong> The publisher reports one sent event. Both subscriber terminals display the same <code>MessageId</code> and body. Each subscription's active message count returns to zero.</p>
+          <p><strong>Challenge:</strong> Stop only the customer-care process and publish another event. Inventory processes it immediately while the customer-care subscription retains its own copy. Restart customer-care and observe it receive the stored event.</p>
+        </section>
+
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-1.html"><small>Previous</small><strong>&lt;- Lab 1</strong></a><a class="next" href="lab-3.html"><small>Next</small><strong>Lab 3 -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#projects">2. Create apps</a><a href="#publisher">3. Publisher</a><a href="#subscriber">4. Subscriber</a><a href="#run">5. Run and verify</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

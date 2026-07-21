@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Module 1: Introduction to Azure Service Bus</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("sb-runtime-theme");
+      document.documentElement.setAttribute("data-theme", (t === "light" || t === "dark") ? t : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="assets/site.css" />
+</head>
+<body data-root="." data-active="module-1">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><span>Introduction</span></nav>
+    <header class="hero">
+      <h1>Introduction to Azure Service Bus</h1>
+      <p class="subtitle">Explore Service Bus messaging scenarios, queues and topics, namespaces, advanced features, and integration patterns.</p>
+      <div class="badge-row"><span class="badge">Conceptual</span><span class="badge">~20 min</span><span class="badge">Module 1 of 11</span></div>
+    </header>
+
+    <div class="layout">
+      <main class="content">
+        <section id="introductions" class="section-card reveal">
+          <h2>Introductions</h2>
+          <p>Azure Service Bus is a fully managed enterprise message broker that enables reliable asynchronous communication between applications and services. This module focuses on when and why to use Service Bus in distributed systems.</p>
+          <figure class="diagram-wrap">
+            <img
+              src="images/custom/message-in-a-bottle-in-the-sea.png"
+              alt="A sealed bottle containing a message floating on the water"
+              loading="lazy"
+              decoding="async"
+              style="display:block;width:100%;max-height:440px;object-fit:cover;object-position:center 58%;border-radius:6px;"
+            />
+            <figcaption>Like a message in a bottle, asynchronous messaging lets a sender leave a message for a receiver without both being present at the same time. Service Bus adds durable storage, reliable delivery, and controlled processing.</figcaption>
+          </figure>
+        </section>
+
+        <section id="overview" class="section-card reveal">
+          <h2>Overview</h2>
+          <ul>
+            <li><strong>Business messaging:</strong> transfer orders, inventory updates, journals, and other business events.</li>
+            <li><strong>Application decoupling:</strong> producers and consumers do not need to be online at the same time.</li>
+            <li><strong>Load leveling:</strong> smooth traffic spikes so downstream services are not overwhelmed.</li>
+            <li><strong>Competing consumers:</strong> safely distribute work across multiple workers.</li>
+          </ul>
+        </section>
+
+        <section id="comparable-services" class="section-card reveal">
+          <h2>Comparable messaging services</h2>
+          <p>Use this matrix to compare the major capabilities of Azure Service Bus with other enterprise and cloud messaging options.</p>
+          <p class="feature-legend"><span class="feature-status feature-yes" aria-hidden="true">&#9745;</span> Supported <span class="feature-status feature-no" aria-hidden="true">&#9744;</span> Not provided as a native feature</p>
+          <div class="table-wrap">
+            <table class="feature-matrix" aria-label="Major messaging features by service">
+              <thead>
+                <tr>
+                  <th>Major feature</th>
+                  <th>Azure Service Bus</th>
+                  <th>IBM MQ</th>
+                  <th>RabbitMQ</th>
+                  <th>Amazon SQS + SNS</th>
+                  <th>Amazon MQ</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Fully managed cloud service</th>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span></td>
+                  <td><span class="feature-status feature-no" aria-label="Not native">&#9744;</span><small>Broker software</small></td>
+                  <td><span class="feature-status feature-no" aria-label="Not native">&#9744;</span><small>Broker software</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">Durable queues</th>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Queues</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Queues</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Durable queues</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>SQS</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Engine-specific</small></td>
+                </tr>
+                <tr>
+                  <th scope="row">Publish-subscribe</th>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Topics + subscriptions</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Topics</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Exchanges + queues</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>SNS + SQS</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Engine-specific</small></td>
+                </tr>
+                <tr>
+                  <th scope="row">Broker transactions</th>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Standard + Premium</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>AMQP transactions</small></td>
+                  <td><span class="feature-status feature-no" aria-label="Not supported">&#9744;</span></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Engine-specific</small></td>
+                </tr>
+                <tr>
+                  <th scope="row">Ordered message groups</th>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Sessions</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Message groups</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported with constraints">&#9745;</span><small>Queue ordering constraints</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>SQS FIFO only</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Engine-specific</small></td>
+                </tr>
+                <tr>
+                  <th scope="row">Dead-letter handling</th>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Built-in subqueue</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Backout queue pattern</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Dead-letter exchange</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>SQS redrive policy</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Engine-specific</small></td>
+                </tr>
+                <tr>
+                  <th scope="row">Scheduled or delayed delivery</th>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Scheduled messages</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Delivery delay</small></td>
+                  <td><span class="feature-status feature-no" aria-label="Not native">&#9744;</span><small>Plugin or queue pattern</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported with limits">&#9745;</span><small>SQS delay limit</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Engine-specific</small></td>
+                </tr>
+                <tr>
+                  <th scope="row">Built-in duplicate detection</th>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>Configured time window</small></td>
+                  <td><span class="feature-status feature-no" aria-label="Not native">&#9744;</span><small>Application pattern</small></td>
+                  <td><span class="feature-status feature-no" aria-label="Not native">&#9744;</span><small>Application pattern</small></td>
+                  <td><span class="feature-status feature-yes" aria-label="Supported">&#9745;</span><small>SQS FIFO only</small></td>
+                  <td><span class="feature-status feature-no" aria-label="Not consistent across engines">&#9744;</span><small>Engine or application pattern</small></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout"><strong>Important:</strong> A checkmark means the capability is available, not that every service implements it the same way. Review the qualifier and confirm tier, broker engine, ordering scope, limits, and protocol requirements before choosing a service.</div>
+        </section>
+
+        <section id="concepts" class="section-card reveal">
+          <h2>Concepts</h2>
+          <h3 id="queue">Queue</h3>
+          <p>A queue supports point-to-point messaging where each message is processed by one successful consumer. Messages are durably stored until they are received and settled.</p>
+
+          <div class="table-wrap">
+            <table aria-label="Queue and topic model">
+              <thead><tr><th>Entity</th><th>Pattern</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>Queue</td>
+                  <td>Point-to-point messaging between sender and receiver.</td>
+                </tr>
+                <tr>
+                  <td>Topic</td>
+                  <td>Publish-subscribe messaging with one sender and multiple subscribers.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="diagram-wrap">
+            <h3>Queue</h3>
+            <img
+              src="https://learn.microsoft.com/en-us/azure/service-bus-messaging/media/service-bus-messaging-overview/about-service-bus-queue.png"
+              alt="Service Bus queue with sender and receiver"
+              loading="lazy"
+              decoding="async"
+              style="max-width:100%;height:auto;border-radius:10px;border:1px solid var(--border);"
+            />
+          </div>
+
+          <h3 id="topics">Topics</h3>
+          <p>Topics support publish-subscribe messaging. Multiple subscriptions can independently receive copies of messages, and rules can filter which messages each subscription gets.</p>
+
+          <div class="diagram-wrap">
+            <h3>Topic</h3>
+            <img
+              src="https://learn.microsoft.com/en-us/azure/service-bus-messaging/media/service-bus-messaging-overview/about-service-bus-topic.png"
+              alt="Service Bus topic with one sender and multiple receivers"
+              loading="lazy"
+              decoding="async"
+              style="max-width:100%;height:auto;border-radius:10px;border:1px solid var(--border);"
+            />
+          </div>
+
+          <h3 id="namespaces">Namespaces</h3>
+          <p>A namespace is the top-level container for messaging entities such as queues and topics. It represents your Service Bus capacity and management boundary.</p>
+        </section>
+
+        <section id="advanced-features" class="section-card reveal">
+          <h2>Advanced features</h2>
+
+          <h3 id="message-sessions">Message sessions</h3>
+          <p>Enable ordered processing and correlation patterns such as request-response for related message streams.</p>
+
+          <h3 id="autoforwarding">Autoforwarding</h3>
+          <p>Automatically chains a queue or subscription to another entity in the same namespace for staged routing workflows.</p>
+
+          <h3 id="dead-lettering">Dead-lettering</h3>
+          <p>Uses a dead-letter subqueue for messages that cannot be delivered or processed, enabling diagnostics and replay workflows.</p>
+
+          <h3 id="scheduled-delivery">Scheduled delivery</h3>
+          <p>Schedules messages for future availability so consumers process them at a specific time.</p>
+
+          <h3 id="message-deferral">Message Deferral</h3>
+          <p>Defers a message when processing cannot happen immediately, allowing retrieval later without message loss.</p>
+
+          <h3 id="transactions">Transactions</h3>
+          <p>Groups operations into an atomic unit, supporting reliable once-only style processing patterns.</p>
+
+          <h3 id="filters-actions">Filters and Actions</h3>
+          <p>Applies subscription rules to select and optionally annotate topic messages per subscriber needs.</p>
+
+          <h3 id="auto-delete-idle">Auto-delete on idle</h3>
+          <p>Automatically deletes idle entities after a configured interval to reduce unused resource sprawl.</p>
+
+          <h3 id="duplicate-detection">Duplicate detection</h3>
+          <p>Prevents duplicate message processing by discarding repeated message sends within the detection window.</p>
+
+          <h3 id="batch-deletion">Batch deletion of messages</h3>
+          <p>Removes expired or no-longer-relevant messages in bulk from queues or subscriptions.</p>
+
+          <h3 id="security">Security</h3>
+          <p>Supports shared access signatures (SAS), Azure RBAC, and managed identities, with AMQP and HTTP/REST access models.</p>
+
+          <h3 id="geo-replication">Geo-Replication</h3>
+          <p>Supports continuity scenarios by enabling data processing in alternate regions during regional disruptions.</p>
+
+          <h3 id="compliance-protocols">Compliance with standards and protocols</h3>
+          <p>Uses AMQP 1.0 as the primary wire protocol and supports JMS compatibility in supported tiers.</p>
+        </section>
+
+        <section id="outcomes" class="section-card reveal">
+          <h2>Module outcomes</h2>
+          <p>By the end of this module, you can describe Service Bus queues, topics, namespaces, and advanced messaging capabilities.</p>
+          <p><strong>Source:</strong> <a href="https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-messaging-overview" target="_blank" rel="noopener">Introduction to Azure Service Bus Messaging - Microsoft Learn</a></p>
+        </section>
+
+        <nav class="pager" aria-label="Workshop pagination">
+          <a class="prev" href="index.html"><small>Previous</small><strong><- Workshop Home</strong></a>
+          <a class="next" href="architecture-design.html"><small>Next</small><strong>Architecture Design -></strong></a>
+        </nav>
+      </main>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>On This Page</h3>
+        <a href="#introductions">Introductions</a>
+        <a href="#overview">Overview</a>
+        <a href="#comparable-services">Comparable messaging services</a>
+        <a href="#concepts">Concepts</a>
+        <a class="toc-sub" href="#queue">Queue</a>
+        <a class="toc-sub" href="#topics">Topics</a>
+        <a class="toc-sub" href="#namespaces">Namespaces</a>
+        <a href="#advanced-features">Advanced features</a>
+        <a class="toc-sub" href="#message-sessions">Message sessions</a>
+        <a class="toc-sub" href="#autoforwarding">Autoforwarding</a>
+        <a class="toc-sub" href="#dead-lettering">Dead-lettering</a>
+        <a class="toc-sub" href="#scheduled-delivery">Scheduled delivery</a>
+        <a class="toc-sub" href="#message-deferral">Message Deferral</a>
+        <a class="toc-sub" href="#transactions">Transactions</a>
+        <a class="toc-sub" href="#filters-actions">Filters and Actions</a>
+        <a class="toc-sub" href="#auto-delete-idle">Auto-delete on idle</a>
+        <a class="toc-sub" href="#duplicate-detection">Duplicate detection</a>
+        <a class="toc-sub" href="#batch-deletion">Batch deletion of messages</a>
+        <a class="toc-sub" href="#security">Security</a>
+        <a class="toc-sub" href="#geo-replication">Geo-Replication</a>
+        <a class="toc-sub" href="#compliance-protocols">Compliance with standards and protocols</a>
+        <a href="#outcomes">Module outcomes</a>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

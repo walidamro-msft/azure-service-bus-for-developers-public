@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JavaScript Labs - Azure Service Bus Workshop</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../assets/site.css" />
+</head>
+<body data-root=".." data-active="javascript">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../index.html">Home</a><span class="sep">/</span><span>JavaScript labs</span></nav>
+    <header class="hero">
+      <h1>JavaScript Service Bus labs</h1>
+      <p class="subtitle">Build an order-fulfilment workflow in Node.js using @azure/service-bus, passwordless authentication, explicit settlement, sessions, dead-letter recovery, and Azure serverless integration.</p>
+      <div class="badge-row"><span class="badge">5 labs</span><span class="badge">JavaScript / Node.js 20+</span><span class="badge">3-4 hours</span><span class="badge">Standard SKU</span></div>
+    </header>
+    <div class="layout">
+      <main class="content">
+        <section id="reference" class="section-card reveal">
+          <h2>Queue processing reference</h2>
+          <p>Before starting the labs, map the common Service Bus controls to receiver creation options, callback subscriptions, settlement calls, sessions, dead-letter access, and client lifetimes.</p>
+          <p><a href="javascript/queue-processing.html">Open the JavaScript / TypeScript queue processing reference</a></p>
+        </section>
+        <section id="scenario" class="section-card reveal">
+          <h2>Scenario and lab map</h2>
+          <p>Each lab is a complete case study: provision the required messaging entities, build independently runnable applications, execute the scenario, and verify its observable result.</p>
+          <ol>
+            <li><a href="javascript/lab-1.html">Queue-based order intake</a> - create a queue plus separate producer and receiver apps</li>
+            <li><a href="javascript/lab-2.html">Publish one event to two subscribers</a> - create a topic plus publisher and two subscriber processes</li>
+            <li><a href="javascript/lab-3.html">Session-ordered fulfilment</a> - create a session queue plus workflow producer and processor</li>
+            <li><a href="javascript/lab-4.html">Dead-letter recovery</a> - produce, reject, inspect, repair, and re-drive an invalid order</li>
+            <li><a href="javascript/lab-5.html">Serverless load-to-storage integration</a> - provision, deploy, load-test, and verify the complete cloud path</li>
+          </ol>
+          <div class="callout"><strong>Authentication:</strong> Sign in with <code>az login</code>. Local code uses <code>DefaultAzureCredential</code>; Azure-hosted components use managed identity. Do not create or copy a Service Bus connection string.</div>
+        </section>
+        <nav class="pager" aria-label="Workshop pagination"><a class="prev" href="java.html"><small>Previous</small><strong>&lt;- Java labs</strong></a><a class="next" href="javascript/queue-processing.html"><small>Next</small><strong>Queue processing reference -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#reference">Queue processing reference</a><a href="#scenario">Scenario and lab map</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../assets/site.js"></script>
+</body>
+</html>

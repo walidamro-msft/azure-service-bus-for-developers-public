@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Module 8: Advanced Features</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("sb-runtime-theme");
+      document.documentElement.setAttribute("data-theme", (t === "light" || t === "dark") ? t : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="assets/site.css" />
+</head>
+<body data-root="." data-active="module-7">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><span>Advanced Features</span></nav>
+    <header class="hero">
+      <h1>Advanced Features</h1>
+      <p class="subtitle">Use advanced broker capabilities to improve ordering, delayed workflows, deduplication, and failure triage.</p>
+      <div class="badge-row"><span class="badge">Hands-on coding</span><span class="badge">~60 min</span><span class="badge">Module 8 of 11</span></div>
+    </header>
+
+    <div class="layout">
+      <main class="content">
+        <section id="sessions" class="section-card reveal">
+          <h2>Sessions for ordered workflows</h2>
+          <p>Sessions bind related messages to the same ordered stream. Use SessionId for workflows like order processing where sequence correctness matters.</p>
+          <div class="callout"><strong>Pattern:</strong> set SessionId to aggregate root key (for example orderId).</div>
+        </section>
+
+        <section id="scheduled-deferral" class="section-card reveal">
+          <h2>Scheduling and deferral</h2>
+<pre class="code" data-lang="csharp">var delayed = new ServiceBusMessage("follow-up")
+{
+    ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddMinutes(15)
+};
+await sender.SendMessageAsync(delayed);
+
+// Deferral keeps message hidden until sequence retrieval
+await args.DeferMessageAsync(args.Message);</pre>
+        </section>
+
+        <section id="duplicate-detection" class="section-card reveal">
+          <h2>Duplicate detection</h2>
+          <p>Enable duplicate detection on queue/topic and always send deterministic MessageId values from upstream systems to prevent replay side effects.</p>
+        </section>
+
+        <section id="dlq-operations" class="section-card reveal">
+          <h2>Dead-letter queue operations</h2>
+          <ul>
+            <li>Capture dead-letter reason and description on failures.</li>
+            <li>Periodically inspect DLQ depth and age.</li>
+            <li>Implement safe re-drive tool with validation and idempotency checks.</li>
+          </ul>
+        </section>
+
+        <nav class="pager" aria-label="Workshop pagination">
+          <a class="prev" href="topics-subscriptions.html"><small>Previous</small><strong><- Topics and Subscriptions</strong></a>
+          <a class="next" href="security-monitoring.html"><small>Next</small><strong>Security and Monitoring -></strong></a>
+        </nav>
+      </main>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>On This Page</h3>
+        <a href="#sessions">Sessions</a>
+        <a href="#scheduled-deferral">Scheduling and deferral</a>
+        <a href="#duplicate-detection">Duplicate detection</a>
+        <a href="#dlq-operations">DLQ operations</a>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

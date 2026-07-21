@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Module 4: Deploy via Azure Portal</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("sb-runtime-theme");
+      document.documentElement.setAttribute("data-theme", (t === "light" || t === "dark") ? t : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="assets/site.css" />
+</head>
+<body data-root="." data-active="module-3">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><span>Deploy via Portal</span></nav>
+    <header class="hero">
+      <h1>Deploy via Azure Portal</h1>
+      <p class="subtitle">Provision Service Bus resources interactively and validate connectivity before moving to infrastructure as code.</p>
+      <div class="badge-row"><span class="badge">Hands-on</span><span class="badge">~25 min</span><span class="badge">Module 4 of 11</span></div>
+    </header>
+
+    <div class="layout">
+      <main class="content">
+        <section id="setup" class="section-card reveal">
+          <h2>Portal setup checklist</h2>
+          <ol>
+            <li>Create or select a resource group for workshop assets.</li>
+            <li>Create a Service Bus namespace and choose the target tier.</li>
+            <li>Create at least one queue and one topic with a subscription.</li>
+            <li>Capture the fully qualified namespace for SDK configuration.</li>
+          </ol>
+        </section>
+
+        <section id="namespace-config" class="section-card reveal">
+          <h2>Recommended namespace configuration</h2>
+          <ul>
+            <li>Use naming convention: sb-&lt;workload&gt;-&lt;env&gt;-&lt;region&gt;.</li>
+            <li>Enable local auth only for learning; prefer managed identity in production.</li>
+            <li>Apply tags: Environment, Owner, Application, CostCenter.</li>
+            <li>Keep public network access limited and plan private endpoints for real workloads.</li>
+          </ul>
+        </section>
+
+        <section id="entities" class="section-card reveal">
+          <h2>Create entities</h2>
+          <div class="table-wrap">
+            <table aria-label="Entity setup">
+              <thead><tr><th>Entity</th><th>Example name</th><th>Important options</th></tr></thead>
+              <tbody>
+                <tr><td>Queue</td><td>orders-queue</td><td>PeekLock, max delivery count, TTL</td></tr>
+                <tr><td>Topic</td><td>orders-topic</td><td>Duplicate detection, partitioning, TTL</td></tr>
+                <tr><td>Subscription</td><td>billing-sub</td><td>Filters, dead-letter on expiration</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="validation" class="section-card reveal">
+          <h2>Validation and smoke test</h2>
+          <p>Use Service Bus Explorer in the portal to send a test message and verify it appears in the target queue/subscription. This confirms namespace access and entity readiness before coding.</p>
+          <div class="callout"><strong>Checkpoint:</strong> Successfully send and receive one message from queue and subscription paths.</div>
+        </section>
+
+        <nav class="pager" aria-label="Workshop pagination">
+          <a class="prev" href="skus-and-tiers.html"><small>Previous</small><strong><- SKUs and Tiers</strong></a>
+          <a class="next" href="deploy-cli-bicep.html"><small>Next</small><strong>Deploy with CLI and Bicep -></strong></a>
+        </nav>
+      </main>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>On This Page</h3>
+        <a href="#setup">Portal setup checklist</a>
+        <a href="#namespace-config">Namespace configuration</a>
+        <a href="#entities">Create entities</a>
+        <a href="#validation">Validation and smoke test</a>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

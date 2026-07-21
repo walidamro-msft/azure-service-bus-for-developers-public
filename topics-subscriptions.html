@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Module 7: Topics and Subscriptions</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("sb-runtime-theme");
+      document.documentElement.setAttribute("data-theme", (t === "light" || t === "dark") ? t : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="assets/site.css" />
+</head>
+<body data-root="." data-active="module-6">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><span>Topics and Subscriptions</span></nav>
+    <header class="hero">
+      <h1>Topics and Subscriptions</h1>
+      <p class="subtitle">Implement publish/subscribe messaging with independent subscribers and rule-based filtering.</p>
+      <div class="badge-row"><span class="badge">Hands-on coding</span><span class="badge">~40 min</span><span class="badge">Module 7 of 11</span></div>
+    </header>
+
+    <div class="layout">
+      <main class="content">
+        <section id="pubsub-model" class="section-card reveal">
+          <h2>Pub/sub model</h2>
+          <p>A topic accepts one published message and fans out to multiple subscriptions, each with its own lifecycle and consumer group.</p>
+          <div class="diagram-wrap">
+            <pre class="mermaid">
+flowchart LR
+    P[Publisher] --> T[(orders-topic)]
+    T --> S1[(inventory-sub)]
+    T --> S2[(billing-sub)]
+    T --> S3[(notifications-sub)]
+            </pre>
+          </div>
+        </section>
+
+        <section id="portal-create" class="section-card reveal">
+          <h2>Create a topic in the Azure portal</h2>
+          <ol>
+            <li>Open a Standard or Premium Service Bus namespace, select <strong>Topics</strong>, and then select <strong>+ Topic</strong>. Basic namespaces do not support topics.</li>
+            <li>Review every setting below before selecting <strong>Create</strong>. Enabling auto-delete or duplicate detection reveals an additional duration setting.</li>
+            <li>After creation, open the topic, create at least one subscription, and verify that each subscription has the intended default rule.</li>
+          </ol>
+          <div class="callout"><strong>Creation-time decisions:</strong> duplicate detection and Standard entity partitioning cannot be enabled or disabled later. Premium partitioning is selected at namespace creation. Recreating a topic also removes its subscriptions and their messages, so treat these settings as infrastructure decisions.</div>
+
+          <div class="property-reference" aria-label="Azure portal topic creation settings">
+            <article class="property-entry"><div class="property-entry-header"><h4>Name</h4><div><span>Value</span>Entity path</div><div><span>Limit</span>1-260 characters</div></div><div class="property-entry-details"><div><h5>What it controls</h5><p>The topic path used by publishers, RBAC scopes, metrics, subscription configuration, and forwarding destinations.</p></div><div><h5>How to choose</h5><p>Use a stable lowercase business-event name such as <code>orders-topic</code>. Avoid secrets, version-specific deployment names, and consumer names because the topic represents the published stream.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Max topic size</h4><div><span>Value</span>Capacity</div><div><span>Portal choices</span>1, 2, 3, 4, or 5 GB; 80 GB when partitioned or Premium</div></div><div class="property-entry-details"><div><h5>What it controls</h5><p>The topic's storage quota. New sends fail when the entity reaches quota. Topic storage includes the message copies retained by its subscriptions, so slow or unavailable subscribers contribute to capacity pressure.</p></div><div><h5>How to choose</h5><p>Estimate fan-out, the longest expected subscriber outage, dead-letter growth, and scheduled messages, then leave operating headroom. Capacity is not retention: message TTL still determines how long a copy remains useful.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Message time to live</h4><div><span>Value</span>Days, hours, minutes, seconds</div><div><span>Portal starting value</span>14 days</div></div><div class="property-entry-details"><div><h5>What it controls</h5><p>The default lifetime for messages published without a shorter per-message <code>TimeToLive</code>. Each subscription copy expires when that lifetime elapses.</p></div><div><h5>How to choose</h5><p>Use the business usefulness window for the event. Confirm each subscription's expiration and dead-letter behavior because subscribers can have different recovery requirements.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Enable auto-delete on idle topic</h4><div><span>Value</span>On/off</div><div><span>Related field</span>Auto-delete after idle for</div></div><div class="property-entry-details"><div><h5>What it controls</h5><p>When enabled, Service Bus deletes the topic after the configured interval without a qualifying client or management operation. Deletion removes the topic, all subscriptions, and their messages rather than merely clearing old messages.</p></div><div><h5>How to choose</h5><p>Enable it only for temporary development, test, reply, or per-job topology that automation can recreate. Leave it off for stable production topics, and remember that the minimum enabled idle interval is 5 minutes.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Auto-delete after idle for</h4><div><span>Value</span>Days, hours, minutes, seconds</div><div><span>Portal starting value</span>14 days</div></div><div class="property-entry-details"><div><h5>What it controls</h5><p>The continuous idle interval that must pass before an auto-delete-enabled topic is removed.</p></div><div><h5>How to choose</h5><p>Set it longer than expected pauses between publisher, subscriber, and management activity. Do not use auto-delete as message retention; use TTL for message lifetime.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Enable duplicate detection</h4><div><span>Value</span>On/off</div><div><span>Availability</span>Standard and Premium</div></div><div class="property-entry-details"><div><h5>What it controls</h5><p>When enabled at creation, Service Bus records accepted <code>MessageId</code> values and discards repeat sends within the configured history window. Every subscription therefore receives at most one copy from those repeated publish attempts.</p></div><div><h5>How to choose</h5><p>Enable it when publishers retry ambiguous sends and can reuse the same deterministic <code>MessageId</code>. It filters duplicate sends, not redelivery to a subscriber, so consumers must still be idempotent.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Duplicate detection window</h4><div><span>Value</span>Days, hours, minutes, seconds</div><div><span>Range</span>20 seconds to 7 days; default 10 minutes</div></div><div class="property-entry-details"><div><h5>What it controls</h5><p>How long Service Bus remembers each accepted <code>MessageId</code>. The window can be changed later only when duplicate detection was enabled at topic creation.</p></div><div><h5>How to choose</h5><p>Keep it close to the longest expected publisher retry interval. Larger windows retain more IDs and can reduce throughput.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Enable partitioning</h4><div><span>Value</span>On/off</div><div><span>Scope</span>Entity-level in Standard; namespace-level in Premium</div></div><div class="property-entry-details"><div><h5>What it controls</h5><p>In Standard, it spreads the topic across 16 brokers and stores for availability, throughput, and an effective 80-GB entity capacity. Premium partitioning is inherited from the namespace and is not a topic-level choice.</p></div><div><h5>How to choose</h5><p>Use it for Standard workloads that need greater capacity or throughput. Avoid it for low-volume workloads that require a globally oldest peek result, and set a consistent partition key only when related events must stay together.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Support ordering</h4><div><span>Value</span>On/off</div><div><span>Scope</span>Nonpartitioned topics</div></div><div class="property-entry-details"><div><h5>What it controls</h5><p>Requests that Service Bus forward messages from a nonpartitioned topic to each subscription in send order. It defaults to off. On a partitioned topic, setting it to on has no effect.</p></div><div><h5>How to choose</h5><p>Enable it only on a nonpartitioned topic when subscribers depend on broker forwarding order. For business ordering through concurrent processing and retries, use session-enabled subscriptions and set <code>SessionId</code> to the aggregate or workflow key.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="publish-code" class="section-card reveal">
+          <h2>Publish code</h2>
+<pre class="code" data-lang="csharp">ServiceBusSender sender = client.CreateSender("orders-topic");
+
+var evt = new ServiceBusMessage("{\"orderId\":123,\"region\":\"us\"}")
+{
+    MessageId = "order-placed:123",
+    CorrelationId = "order:123",
+    Subject = "OrderPlaced.v1",
+    ContentType = "application/json"
+};
+evt.ApplicationProperties["region"] = "us";
+evt.ApplicationProperties["schemaVersion"] = 1;
+
+await sender.SendMessageAsync(evt);</pre>
+        </section>
+
+        <section id="topic-message-strategy" class="section-card reveal">
+          <h2>Message strategy for topics</h2>
+          <p>A topic does not require a different message type. Publishers send the same <code>ServiceBusMessage</code> envelope used for a queue. Service Bus evaluates the topic's subscription rules and places a copy into every matching subscription. The original <code>MessageId</code>, <code>CorrelationId</code>, <code>Subject</code>, body, and application properties describe the same published event in every copy.</p>
+
+          <div class="table-wrap">
+            <table aria-label="Topic publishing property strategy">
+              <thead><tr><th>Concern</th><th>Recommended field</th><th>Topic strategy</th></tr></thead>
+              <tbody>
+                <tr><td>Event identity</td><td><code>MessageId</code></td><td>Assign one immutable ID when the event is created and reuse it for publisher retries. Each subscriber sees that same event ID and can apply idempotency independently. Do not use only <code>orderId</code> when several event types or revisions can exist for one order.</td></tr>
+                <tr><td>Workflow tracing</td><td><code>CorrelationId</code></td><td>Use the order, checkout, or distributed workflow ID. Several events may share one correlation ID while retaining different message IDs.</td></tr>
+                <tr><td>Contract selection</td><td><code>Subject</code></td><td>Use a stable event name such as <code>OrderPlaced.v1</code>. Subscribers can select the contracts they understand without parsing the body first.</td></tr>
+                <tr><td>Subscription routing</td><td><code>ApplicationProperties</code></td><td>Promote only fields needed by filters, such as <code>region</code>, <code>tenantId</code>, or <code>priority</code>. Keep the authoritative value in the body when it is part of the business event.</td></tr>
+                <tr><td>Per-key ordering</td><td><code>SessionId</code></td><td>On a session-enabled topic, use the aggregate key for ordered handling. Subscriptions receive session-aware copies and their consumers process sessions independently.</td></tr>
+                <tr><td>Compatibility</td><td><code>ContentType</code> plus a versioned contract</td><td>Prefer additive schema evolution. Introduce a new major subject or topic only for incompatible changes, and keep old subscribers running during migration.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Design filters deliberately</h3>
+          <p>SQL filters can evaluate system and application properties, while correlation filters are optimized for exact matches. Prefer a small, documented set of routing properties. A subscription starts with a default rule that matches every message; remove or replace that rule when the subscription should receive only selected events.</p>
+          <ul>
+            <li>Filter on stable envelope metadata, not values hidden inside the serialized body.</li>
+            <li>Treat property names, types, and casing as part of the event contract.</li>
+            <li>Plan for unmatched events and test every publisher event type against the complete rule set.</li>
+            <li>Avoid embedding consumer names in events. Publishers describe facts; subscription rules decide which consumers receive them.</li>
+          </ul>
+
+          <div class="callout"><strong>Fan-out detail:</strong> Delivery state belongs to each subscription copy. Inventory and billing can therefore have different <code>SequenceNumber</code>, <code>DeliveryCount</code>, lock, completion, and dead-letter outcomes even though their copies retain the same publisher-assigned message identity and payload.</div>
+          <p>For the complete field-by-field envelope reference, including TTL, scheduling, reply-to, locks, and delivery metadata, see <a href="queues.html#message-anatomy">Service Bus message anatomy</a>.</p>
+        </section>
+
+        <section id="filters" class="section-card reveal">
+          <h2>Subscription filters</h2>
+<pre class="code" data-lang="bash">az servicebus topic subscription rule create \
+  --resource-group rg-sb-workshop \
+  --namespace-name sb-workshop-demo \
+  --topic-name orders-topic \
+  --subscription-name billing-sub \
+  --name OnlyUS \
+  --filter-sql-expression "region = 'us'"</pre>
+          <p>Use SQL and correlation filters to route messages to specialized handlers without custom broker code.</p>
+        </section>
+
+        <section id="consumer-pattern" class="section-card reveal">
+          <h2>Consumer pattern</h2>
+          <ul>
+            <li>One processor instance per subscription queue path.</li>
+            <li>Independent scaling for each downstream capability.</li>
+            <li>Per-subscription DLQ operations and alerting.</li>
+          </ul>
+        </section>
+
+        <section id="language-references" class="section-card reveal">
+          <h2>Topic processing by programming language</h2>
+          <p>Choose your SDK for exact publisher, subscriber, settlement, filter-management, and client-lifecycle guidance.</p>
+          <div class="property-reference" aria-label="Topic processing language references">
+            <article class="property-entry"><div class="property-entry-header"><h4>.NET</h4><div><span>Package</span><code>Azure.Messaging.ServiceBus</code></div><div><span>Processing shape</span>Processor or receiver</div></div><div class="property-entry-details property-entry-details-single"><div><h5>Open the reference</h5><p><a href="languages/dotnet/topic-processing.html">Map topic publishing, subscription processors, settlement, and administration rules to .NET APIs.</a></p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Java</h4><div><span>Package</span><code>azure-messaging-servicebus</code></div><div><span>Processing shape</span>Processor client or receiver</div></div><div class="property-entry-details property-entry-details-single"><div><h5>Open the reference</h5><p><a href="languages/java/topic-processing.html">Use Java sender, processor, receiver, and administration clients for topic workflows.</a></p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>JavaScript / TypeScript</h4><div><span>Package</span><code>@azure/service-bus</code></div><div><span>Processing shape</span>Receiver subscription or pull receive</div></div><div class="property-entry-details property-entry-details-single"><div><h5>Open the reference</h5><p><a href="languages/javascript/topic-processing.html">Use JavaScript and TypeScript senders, receivers, subscriptions, and broker-side rules.</a></p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Python</h4><div><span>Package</span><code>azure-servicebus</code></div><div><span>Processing shape</span>Receiver loop or batched receive</div></div><div class="property-entry-details property-entry-details-single"><div><h5>Open the reference</h5><p><a href="languages/python/topic-processing.html">Use Python topic senders, subscription receivers, settlement, and management APIs.</a></p></div></div></article>
+          </div>
+          <p><strong>References:</strong> <a href="https://learn.microsoft.com/azure/service-bus-messaging/topic-filters">subscription filters</a>, <a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-filter-examples">SQL and correlation filter examples</a>, and <a href="administration.html">Service Bus administration</a>.</p>
+        </section>
+
+        <nav class="pager" aria-label="Workshop pagination">
+          <a class="prev" href="queues.html"><small>Previous</small><strong><- Working with Queues</strong></a>
+          <a class="next" href="advanced-features.html"><small>Next</small><strong>Advanced Features -></strong></a>
+        </nav>
+      </main>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>On This Page</h3>
+        <a href="#pubsub-model">Pub/sub model</a>
+        <a href="#portal-create">Create a topic</a>
+        <a href="#publish-code">Publish code</a>
+        <a href="#topic-message-strategy">Message strategy</a>
+        <a href="#filters">Subscription filters</a>
+        <a href="#consumer-pattern">Consumer pattern</a>
+        <a href="#language-references">Language references</a>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

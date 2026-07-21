@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Working with Queues - Java - Azure Service Bus Workshop</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="queue-java">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../../queues.html">Working with Queues</a><span class="sep">/</span><span>Java</span></nav>
+    <header class="hero">
+      <h1>Working with queues in Java</h1>
+      <p class="subtitle">Map Service Bus processing decisions to the fluent client builder, processor clients, synchronous and asynchronous receivers, settlement contexts, and sessions.</p>
+      <div class="badge-row"><span class="badge">Java 17+</span><span class="badge">azure-messaging-servicebus</span><span class="badge">Processor and receiver models</span></div>
+    </header>
+    <div class="layout">
+      <main class="content">
+        <section id="setup" class="section-card reveal">
+          <h2>Package, authentication, and builder</h2>
+          <p>Add <code>com.azure:azure-messaging-servicebus</code> and <code>com.azure:azure-identity</code>. Use <code>DefaultAzureCredential</code> locally and managed identity for Azure-hosted workloads. Grant producers <strong>Azure Service Bus Data Sender</strong> and consumers <strong>Azure Service Bus Data Receiver</strong>.</p>
+<pre class="code" data-lang="xml">&lt;dependency&gt;
+  &lt;groupId&gt;com.azure&lt;/groupId&gt;
+  &lt;artifactId&gt;azure-messaging-servicebus&lt;/artifactId&gt;
+  &lt;version&gt;7.17.17&lt;/version&gt;
+&lt;/dependency&gt;
+&lt;dependency&gt;
+  &lt;groupId&gt;com.azure&lt;/groupId&gt;
+  &lt;artifactId&gt;azure-identity&lt;/artifactId&gt;
+&lt;/dependency&gt;</pre>
+<pre class="code" data-lang="java">String fqns = System.getenv("SERVICEBUS_FQNS");
+TokenCredential credential = new DefaultAzureCredentialBuilder().build();
+
+ServiceBusClientBuilder builder = new ServiceBusClientBuilder()
+    .fullyQualifiedNamespace(fqns)
+    .credential(credential);</pre>
+          <div class="callout"><strong>Connection reuse:</strong> clients built from the same top-level <code>ServiceBusClientBuilder</code> can share the underlying connection. Keep clients long-lived and close them during shutdown.</div>
+        </section>
+
+        <section id="send" class="section-card reveal">
+          <h2>Send to a queue</h2>
+<pre class="code" data-lang="java">ServiceBusSenderClient sender = builder.sender()
+    .queueName("orders-processing")
+    .buildClient();
+
+ServiceBusMessage message = new ServiceBusMessage(BinaryData.fromString(
+    "{\"orderId\":\"ORD-123\",\"status\":\"created\"}"))
+    .setMessageId(UUID.randomUUID().toString())
+    .setCorrelationId("order:ORD-123")
+    .setSubject("OrderCreated.v1")
+    .setContentType("application/json")
+    .setTimeToLive(Duration.ofMinutes(30));
+message.getApplicationProperties().put("schemaVersion", 1);
+
+sender.sendMessage(message);</pre>
+          <p>Reuse the sender and close it during shutdown. Use <code>ServiceBusMessageBatch.tryAddMessage</code> for size-aware batching; when it returns <code>false</code>, send the current batch and start another.</p>
+        </section>
+
+        <section id="message-fields" class="section-card reveal">
+          <h2>Java message objects and fields</h2>
+          <div class="property-reference" aria-label="Java Service Bus message field mapping">
+            <article class="property-entry"><div class="property-entry-header"><h4><code>getBody()</code></h4><div><span>Type</span><code>BinaryData</code></div><div><span>Object</span><code>ServiceBusMessage</code></div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>The opaque payload passed to the constructor.</p></div><div><h5>Use</h5><p>Create it from bytes, strings, streams, or serialized objects. Pair it with a MIME <code>contentType</code> and a versioned contract.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>messageId</code></h4><div><span>Methods</span><code>setMessageId</code>, <code>getMessageId</code></div><div><span>Limit</span>128 characters</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>The logical message identity and duplicate-detection key.</p></div><div><h5>Use</h5><p>Persist one UUID with the outgoing operation and reuse it across retries of that same send.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>correlationId</code> and <code>subject</code></h4><div><span>Type</span><code>String</code></div><div><span>Purpose</span>Workflow and contract</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>Correlation connects a workflow; subject names the business message.</p></div><div><h5>Use</h5><p>Set with <code>setCorrelationId</code> and <code>setSubject</code>. Keep both stable across language boundaries.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>contentType</code> and application properties</h4><div><span>Types</span><code>String</code>, <code>Map&lt;String, Object&gt;</code></div><div><span>Purpose</span>Format and metadata</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p><code>setContentType</code> describes serialization; <code>getApplicationProperties</code> exposes compact scalar metadata.</p></div><div><h5>Use</h5><p>Use application properties for filterable schema, tenant, or region values. Keep the body as the source of business data.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>sessionId</code>, <code>partitionKey</code>, and <code>timeToLive</code></h4><div><span>Types</span><code>String</code>, <code>Duration</code></div><div><span>Purpose</span>Ordering, affinity, expiration</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>Set through <code>setSessionId</code>, <code>setPartitionKey</code>, and <code>setTimeToLive</code>.</p></div><div><h5>Use</h5><p>A session queue requires a session ID. Match partition key to session ID when both are present. TTL is capped by the entity default.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Received-only fields</h4><div><span>Object</span><code>ServiceBusReceivedMessage</code></div><div><span>Owner</span>Service Bus</div></div><div class="property-entry-details"><div><h5>Methods</h5><p><code>getSequenceNumber</code>, <code>getEnqueuedTime</code>, <code>getExpiresAt</code>, <code>getDeliveryCount</code>, <code>getLockToken</code>, <code>getLockedUntil</code>, <code>getDeadLetterReason</code>, and <code>getDeadLetterErrorDescription</code>.</p></div><div><h5>Use</h5><p>Use for settlement and diagnostics, not as publisher-assigned business data.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="processor" class="section-card reveal">
+          <h2>Continuous processing with <code>ServiceBusProcessorClient</code></h2>
+          <p>The processor client is the callback-based production model. It handles background receive and connection recovery. Configure the message and error callbacks before building it.</p>
+<pre class="code" data-lang="java">ServiceBusProcessorClient processor = builder.processor()
+    .queueName("orders")
+    .receiveMode(ServiceBusReceiveMode.PEEK_LOCK)
+    .disableAutoComplete()
+    .maxConcurrentCalls(4)
+    .maxAutoLockRenewDuration(Duration.ofMinutes(5))
+    .prefetchCount(0)
+    .identifier("orders-worker:" + System.getenv("COMPUTERNAME"))
+    .processMessage(context -&gt; {
+        try {
+            processOrder(context.getMessage().getBody().toString());
+            context.complete();
+        } catch (PermanentOrderException exception) {
+            context.deadLetter(new DeadLetterOptions()
+                .setDeadLetterReason("InvalidOrder")
+                .setDeadLetterErrorDescription(exception.getMessage()));
+        } catch (RuntimeException exception) {
+            context.abandon();
+        }
+    })
+    .processError(context -&gt; System.err.printf("%s %s: %s%n",
+        context.getErrorSource(), context.getEntityPath(), context.getException()))
+    .buildProcessorClient();
+
+processor.start();
+shutdownSignal.await();
+processor.stop();
+processor.close();</pre>
+          <p><code>start()</code> returns immediately. On shutdown, stop new delivery and close the processor after in-flight work has had an opportunity to finish.</p>
+        </section>
+
+        <section id="options" class="section-card reveal">
+          <h2>Processor builder mapping</h2>
+          <div class="property-reference" aria-label="Java Service Bus processor builder reference">
+            <article class="property-entry"><div class="property-entry-header"><h4><code>disableAutoComplete()</code></h4><div><span>Data type</span>Fluent switch</div><div><span>Default</span>Auto-complete enabled</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Without this call, an unsettled message is completed after a successful callback and abandoned when the callback throws.</p></div><div><h5>Strategy</h5><p>Disable auto-complete when code must explicitly call <code>complete</code>, <code>abandon</code>, <code>defer</code>, or <code>deadLetter</code>.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>maxConcurrentCalls(int)</code></h4><div><span>Data type</span>Positive <code>int</code></div><div><span>Default</span><code>1</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Limits simultaneous message callbacks on one processor.</p></div><div><h5>Strategy</h5><p>Multiply by replica count for potential application concurrency. Increase only while downstream pools, latency, memory, and lock completion remain healthy.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>maxAutoLockRenewDuration(Duration)</code></h4><div><span>Data type</span><code>Duration</code></div><div><span>Default</span>5 minutes</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Sets how long the processor renews a message lock while its callback runs.</p></div><div><h5>Strategy</h5><p>Use a finite duration above expected processing time. Use <code>Duration.ZERO</code> to disable auto renewal.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>prefetchCount(int)</code></h4><div><span>Data type</span>Non-negative <code>int</code></div><div><span>Default</span>SDK-managed conservative value</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Sets the number of messages cached locally ahead of callback demand. PeekLock time runs while cached.</p></div><div><h5>Strategy</h5><p>Use zero while establishing correctness, then increase gradually for fast and steady work. Recheck the API reference for the exact default in the package version you deploy.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>receiveMode(ServiceBusReceiveMode)</code></h4><div><span>Data type</span>Enumeration</div><div><span>Default</span><code>PEEK_LOCK</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p><code>PEEK_LOCK</code> requires settlement; <code>RECEIVE_AND_DELETE</code> removes on transfer.</p></div><div><h5>Strategy</h5><p>Use <code>PEEK_LOCK</code> unless loss after client transfer is explicitly acceptable.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>subQueue(SubQueue)</code></h4><div><span>Data type</span>Enumeration</div><div><span>Default</span>Main entity</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Selects a dead-letter or transfer dead-letter subqueue instead of the main entity.</p></div><div><h5>Strategy</h5><p>Build a separate receiver or processor with <code>SubQueue.DEAD_LETTER_QUEUE</code> for controlled recovery.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>identifier(String)</code></h4><div><span>Data type</span><code>String</code></div><div><span>Default</span>Generated unique value</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Names the receive client in selected errors and logs without changing routing.</p></div><div><h5>Strategy</h5><p>Use a stable role plus unique host or replica suffix.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="receiver" class="section-card reveal">
+          <h2>Pull receiving</h2>
+          <p>Build a synchronous receiver for blocking application-controlled batches, or <code>buildAsyncClient()</code> for a Reactor <code>Flux</code>-based pipeline.</p>
+<pre class="code" data-lang="java">try (ServiceBusReceiverClient receiver = builder.receiver()
+        .queueName("orders")
+        .receiveMode(ServiceBusReceiveMode.PEEK_LOCK)
+        .disableAutoComplete()
+        .prefetchCount(0)
+        .identifier("orders-batch:" + System.getenv("COMPUTERNAME"))
+        .buildClient()) {
+
+    receiver.receiveMessages(20, Duration.ofSeconds(5)).forEach(message -&gt; {
+        try {
+            processOrder(message.getBody().toString());
+            receiver.complete(message);
+        } catch (RuntimeException exception) {
+            receiver.abandon(message);
+        }
+    });
+}</pre>
+          <p>The batch can contain fewer than the requested number. The async receiver exposes <code>receiveMessages()</code> and asynchronous settlement methods; keep the reactive subscription and receiver alive until shutdown.</p>
+        </section>
+
+        <section id="objects" class="section-card reveal">
+          <h2>Choose the Java object</h2>
+          <div class="property-reference" aria-label="Java Service Bus object selection">
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusClientBuilder</code></h4><div><span>Creates</span>Client sub-builders</div><div><span>Lifetime</span>Startup/application</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Credential, namespace, retry, transport, and connection-sharing configuration.</p></div><div><h5>Lifecycle</h5><p>Reuse one configured builder when clients should share connection resources.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusProcessorClient</code></h4><div><span>Create with</span><code>processor()</code></div><div><span>Lifetime</span>Worker</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Continuous callbacks and connection recovery.</p></div><div><h5>Lifecycle</h5><p>Start once, stop gracefully, and close.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Receiver clients</h4><div><span>Create with</span><code>receiver()</code></div><div><span>Forms</span>Sync and async</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Pull receive, peek, deferred retrieval, manual settlement, and subqueues.</p></div><div><h5>Lifecycle</h5><p>Reuse per entity and close after the consuming workflow.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Session clients</h4><div><span>Create with</span><code>sessionProcessor()</code> or <code>sessionReceiver()</code></div><div><span>Lifetime</span>Worker or session</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>The session processor continuously discovers sessions. The session receiver accepts the next available or a specified session.</p></div><div><h5>Tuning</h5><p><code>maxConcurrentSessions</code> controls parallel sessions; <code>maxConcurrentCalls</code> controls calls within the session processor.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Sender clients</h4><div><span>Create with</span><code>sender()</code></div><div><span>Forms</span>Sync and async</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Sending, scheduling, cancellation, and creating a size-aware message batch.</p></div><div><h5>Lifecycle</h5><p>Reuse a sender per queue or topic rather than creating one per send.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusAdministrationClient</code></h4><div><span>Builder</span><code>ServiceBusAdministrationClientBuilder</code></div><div><span>Lifetime</span>Administration workflow</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Entity definitions, rules, and runtime properties.</p></div><div><h5>Lifecycle</h5><p>Keep management operations separate from message processing.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="variants" class="section-card reveal">
+          <h2>Sessions, subscriptions, and dead-letter queues</h2>
+          <ul>
+            <li>For a topic subscription, configure both <code>topicName</code> and <code>subscriptionName</code> on the processor or receiver sub-builder.</li>
+            <li>For continuous session processing, use <code>sessionProcessor()</code> and set <code>maxConcurrentSessions</code>.</li>
+            <li>For explicit session control, use <code>sessionReceiver()</code>, then <code>acceptSession</code> or <code>acceptNextSession</code>.</li>
+            <li>For dead-letter recovery, set <code>subQueue(SubQueue.DEAD_LETTER_QUEUE)</code> on a separate receiver or processor.</li>
+          </ul>
+          <p><strong>References:</strong> <a href="https://learn.microsoft.com/java/api/com.azure.messaging.servicebus.servicebusclientbuilder?view=azure-java-stable">client builder</a>, <a href="https://learn.microsoft.com/java/api/com.azure.messaging.servicebus.servicebusprocessorclient?view=azure-java-stable">processor client</a>, and <a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-java-how-to-use-topics-subscriptions">Java topics and subscriptions</a>.</p>
+        </section>
+
+        <nav class="pager" aria-label="Reference pagination"><a class="prev" href="../dotnet/queue-processing.html"><small>Previous</small><strong>&lt;- .NET</strong></a><a class="next" href="../javascript/queue-processing.html"><small>Next</small><strong>JavaScript / TypeScript -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#setup">Package and authentication</a><a href="#send">Send to a queue</a><a href="#message-fields">Message fields</a><a href="#processor">Continuous processor</a><a href="#options">Builder options</a><a href="#receiver">Pull receiver</a><a href="#objects">Object guide</a><a href="#variants">Sessions and DLQ</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

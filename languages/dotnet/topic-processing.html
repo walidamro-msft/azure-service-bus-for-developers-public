@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Topics and Subscriptions - .NET - Azure Service Bus Workshop</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="topic-dotnet">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../../topics-subscriptions.html">Topics and Subscriptions</a><span class="sep">/</span><span>.NET</span></nav>
+    <header class="hero">
+      <h1>Topics and subscriptions in .NET</h1>
+      <p class="subtitle">Publish events, process independent subscription copies, and manage SQL and correlation rules with Azure.Messaging.ServiceBus.</p>
+      <div class="badge-row"><span class="badge">C# / .NET 8+</span><span class="badge">Azure.Messaging.ServiceBus</span><span class="badge">Publish, subscribe, and filter</span></div>
+    </header>
+    <div class="layout">
+      <main class="content">
+        <section id="setup" class="section-card reveal">
+          <h2>Package, identity, and topology</h2>
+          <p>Install <code>Azure.Messaging.ServiceBus</code> and <code>Azure.Identity</code>. Reuse one <code>ServiceBusClient</code> per namespace. Grant publishers <strong>Azure Service Bus Data Sender</strong>, subscribers <strong>Azure Service Bus Data Receiver</strong>, and topology automation <strong>Azure Service Bus Data Owner</strong> only when it must manage rules.</p>
+<pre class="code" data-lang="powershell">dotnet add package Azure.Messaging.ServiceBus
+dotnet add package Azure.Identity</pre>
+<pre class="code" data-lang="csharp">using Azure.Identity;
+using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
+
+string fqns = Environment.GetEnvironmentVariable("SERVICEBUS_FQNS")
+    ?? throw new InvalidOperationException("Set SERVICEBUS_FQNS.");
+
+await using var client = new ServiceBusClient(fqns, new DefaultAzureCredential());</pre>
+          <div class="callout"><strong>Fan-out boundary:</strong> a topic receives the publisher's message once. Each matching subscription owns a durable copy with independent locks, delivery count, settlement, and dead-letter state.</div>
+        </section>
+
+        <section id="publish" class="section-card reveal">
+          <h2>Publish to a topic</h2>
+          <p>A topic sender uses the same <code>ServiceBusSender</code> and <code>ServiceBusMessage</code> types as a queue sender. Put fields needed by subscription rules in <code>ApplicationProperties</code>; rules cannot inspect JSON body fields.</p>
+<pre class="code" data-lang="csharp">await using ServiceBusSender sender = client.CreateSender("order-events");
+
+var message = new ServiceBusMessage(BinaryData.FromObjectAsJson(new
+{
+    orderId = "ORD-123",
+    total = 149.50
+}))
+{
+    MessageId = "order-created:ORD-123",
+    CorrelationId = "order:ORD-123",
+    Subject = "OrderCreated.v1",
+    ContentType = "application/json"
+};
+message.ApplicationProperties["region"] = "us";
+message.ApplicationProperties["priority"] = 3;
+
+await sender.SendMessageAsync(message);</pre>
+          <p>Reuse the same <code>MessageId</code> when retrying the same logical publish. Every matching subscription copy preserves that publisher-assigned identity, so each subscriber can enforce idempotency independently.</p>
+        </section>
+
+        <section id="subscribe" class="section-card reveal">
+          <h2>Process one subscription</h2>
+          <p>Create a processor with both the topic and subscription names. One processor instance targets one subscription path; deploy separate processors or worker roles when downstream capabilities scale independently.</p>
+<pre class="code" data-lang="csharp">await using ServiceBusProcessor processor = client.CreateProcessor(
+    "order-events",
+    "inventory",
+    new ServiceBusProcessorOptions
+    {
+        AutoCompleteMessages = false,
+        MaxConcurrentCalls = 4,
+        MaxAutoLockRenewalDuration = TimeSpan.FromMinutes(5)
+    });
+
+processor.ProcessMessageAsync += async args =&gt;
+{
+    try
+    {
+        await ReserveInventoryAsync(args.Message.Body);
+        await args.CompleteMessageAsync(args.Message);
+    }
+    catch (InvalidOrderException exception)
+    {
+        await args.DeadLetterMessageAsync(args.Message, "InvalidOrder", exception.Message);
+    }
+    catch
+    {
+        await args.AbandonMessageAsync(args.Message);
+    }
+};
+processor.ProcessErrorAsync += args =&gt;
+{
+    Console.Error.WriteLine($"{args.EntityPath}: {args.Exception}");
+    return Task.CompletedTask;
+};
+
+await processor.StartProcessingAsync();</pre>
+          <p>For pull-based handling, call <code>client.CreateReceiver(topicName, subscriptionName)</code>. Complete, abandon, defer, dead-letter, and lock-renewal behavior is identical to queue receiving, but settlement affects only this subscription's copy.</p>
+        </section>
+
+        <section id="filters" class="section-card reveal">
+          <h2>Manage subscription rules</h2>
+          <p>Use <code>ServiceBusAdministrationClient</code> for rules. A new subscription includes <code>$Default</code>, which matches every message. Delete it when the subscription should receive only explicitly matched events.</p>
+<pre class="code" data-lang="csharp">var admin = new ServiceBusAdministrationClient(fqns, new DefaultAzureCredential());
+
+await admin.DeleteRuleAsync("order-events", "inventory", RuleProperties.DefaultRuleName);
+
+await admin.CreateRuleAsync(
+    "order-events",
+    "inventory",
+    new CreateRuleOptions("UsOrders", new SqlRuleFilter("region = 'us' AND priority &gt;= 2")));
+
+await admin.CreateRuleAsync(
+    "order-events",
+    "billing",
+    new CreateRuleOptions("OrderCreated", new CorrelationRuleFilter
+    {
+        Subject = "OrderCreated.v1"
+    }));</pre>
+          <div class="property-reference" aria-label=".NET subscription filter choices">
+            <article class="property-entry"><div class="property-entry-header"><h4><code>SqlRuleFilter</code></h4><div><span>Use for</span>Expressions and comparisons</div><div><span>Reads</span>System and application properties</div></div><div class="property-entry-details property-entry-details-single"><div><h5>Choose it when</h5><p>A rule combines fields, ranges, Boolean logic, or null checks. Keep expressions small and treat property names, casing, and data types as part of the event contract.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>CorrelationRuleFilter</code></h4><div><span>Use for</span>Exact matches</div><div><span>Reads</span>Selected system and application properties</div></div><div class="property-entry-details property-entry-details-single"><div><h5>Choose it when</h5><p>The subscription matches exact values such as subject, correlation ID, or a compact property set. It is optimized for equality matching.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="operations" class="section-card reveal">
+          <h2>Operational design</h2>
+          <ul>
+            <li>Use a distinct subscription for every capability that needs its own durable event copy.</li>
+            <li>Use competing processors on the same subscription only when instances should share that subscription's work.</li>
+            <li>Monitor active, dead-letter, and oldest-message age per subscription rather than only at the topic.</li>
+            <li>Keep subscription processors long-lived and stop them gracefully before disposing the shared client.</li>
+            <li>Use <code>SubQueue.DeadLetter</code> with the topic and subscription receiver overload for focused recovery.</li>
+          </ul>
+          <p><strong>References:</strong> <a href="https://learn.microsoft.com/dotnet/api/azure.messaging.servicebus.servicebusclient">client factory methods</a>, <a href="https://learn.microsoft.com/dotnet/api/azure.messaging.servicebus.administration.servicebusadministrationclient">administration client</a>, and <a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-dotnet-how-to-use-topics-subscriptions">.NET topics and subscriptions</a>.</p>
+        </section>
+
+        <nav class="pager" aria-label="Reference pagination"><a class="prev" href="../../topics-subscriptions.html"><small>Previous</small><strong>&lt;- Topics and Subscriptions</strong></a><a class="next" href="../java/topic-processing.html"><small>Next</small><strong>Java -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#setup">Package and topology</a><a href="#publish">Publish to a topic</a><a href="#subscribe">Process a subscription</a><a href="#filters">Subscription rules</a><a href="#operations">Operational design</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Module 11: Summary and Next Steps</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("sb-runtime-theme");
+      document.documentElement.setAttribute("data-theme", (t === "light" || t === "dark") ? t : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="assets/site.css" />
+</head>
+<body data-root="." data-active="module-10">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><span>Summary</span></nav>
+    <header class="hero">
+      <h1>Summary and Next Steps</h1>
+      <p class="subtitle">Consolidate workshop outcomes, clean up cloud resources, and define your path to production maturity.</p>
+      <div class="badge-row"><span class="badge">Wrap-up</span><span class="badge">~10 min</span><span class="badge">Module 11 of 11</span></div>
+    </header>
+
+    <div class="layout">
+      <main class="content">
+        <section id="what-you-built" class="section-card reveal">
+          <h2>What you built</h2>
+          <ul>
+            <li>Provisioned Service Bus with both portal and IaC approaches.</li>
+            <li>Implemented queue and topic/subscription message flows in .NET.</li>
+            <li>Applied advanced reliability features including sessions and DLQ workflows.</li>
+            <li>Defined security and monitoring baselines for production readiness.</li>
+            <li>Inspected runtime health and practiced a safe administration runbook.</li>
+          </ul>
+        </section>
+
+        <section id="cleanup" class="section-card reveal">
+          <h2>Cleanup</h2>
+<pre class="code" data-lang="bash">az group delete --name rg-sb-workshop --yes --no-wait</pre>
+          <p>Delete workshop resources after delivery to avoid unnecessary spend.</p>
+        </section>
+
+        <section id="next-steps" class="section-card reveal">
+          <h2>Recommended next steps</h2>
+          <ol>
+            <li>Integrate outbox/inbox patterns with your transactional services.</li>
+            <li>Add end-to-end trace correlation across producers and consumers.</li>
+            <li>Automate namespace governance via policy and CI validation.</li>
+            <li>Introduce load and chaos testing for failure-mode readiness.</li>
+          </ol>
+        </section>
+
+        <section id="resources" class="section-card reveal">
+          <h2>References</h2>
+          <ul>
+            <li><a href="https://learn.microsoft.com/azure/service-bus-messaging/" target="_blank" rel="noopener">Azure Service Bus docs</a></li>
+            <li><a href="https://learn.microsoft.com/dotnet/api/azure.messaging.servicebus" target="_blank" rel="noopener">Azure.Messaging.ServiceBus API reference</a></li>
+            <li><a href="https://github.com/Azure/azure-sdk-for-net/tree/main/sdk/servicebus/Azure.Messaging.ServiceBus/samples" target="_blank" rel="noopener">Official .NET samples</a></li>
+          </ul>
+        </section>
+
+        <nav class="pager" aria-label="Workshop pagination">
+          <a class="prev" href="administration.html"><small>Previous</small><strong><- Administration and Operations</strong></a>
+          <a class="next" href="index.html"><small>Next</small><strong>Back to Home -></strong></a>
+        </nav>
+      </main>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>On This Page</h3>
+        <a href="#what-you-built">What you built</a>
+        <a href="#cleanup">Cleanup</a>
+        <a href="#next-steps">Recommended next steps</a>
+        <a href="#resources">References</a>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

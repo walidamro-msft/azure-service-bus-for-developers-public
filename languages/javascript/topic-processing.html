@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Topics and Subscriptions - JavaScript and TypeScript - Azure Service Bus Workshop</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" /><link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="topic-javascript"><div class="page">
+  <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../../topics-subscriptions.html">Topics and Subscriptions</a><span class="sep">/</span><span>JavaScript / TypeScript</span></nav>
+  <header class="hero"><h1>Topics and subscriptions in JavaScript / TypeScript</h1><p class="subtitle">Publish events, subscribe independently, and manage broker-side rules with @azure/service-bus.</p><div class="badge-row"><span class="badge">Node.js 20+</span><span class="badge">@azure/service-bus</span><span class="badge">Async publisher and subscribers</span></div></header>
+  <div class="layout"><main class="content">
+    <section id="setup" class="section-card reveal"><h2>Package, identity, and topology</h2><p>Install the Service Bus and identity packages. Reuse one <code>ServiceBusClient</code> and long-lived entity clients. Use sender, receiver, and owner roles according to the operation.</p>
+<pre class="code" data-lang="powershell">npm install @azure/service-bus @azure/identity</pre>
+<pre class="code" data-lang="javascript">import {
+  ServiceBusAdministrationClient,
+  ServiceBusClient
+} from "@azure/service-bus";
+import { DefaultAzureCredential } from "@azure/identity";
+
+const fqns = process.env.SERVICEBUS_FQNS;
+if (!fqns) throw new Error("Set SERVICEBUS_FQNS.");
+const credential = new DefaultAzureCredential();
+const client = new ServiceBusClient(fqns, credential);</pre>
+      <div class="callout"><strong>Fan-out boundary:</strong> different subscriptions receive independent copies. Multiple receivers attached to the same subscription compete for that subscription's messages.</div></section>
+
+    <section id="publish" class="section-card reveal"><h2>Publish to a topic</h2><p>Create a sender for the topic. Put filterable metadata in <code>applicationProperties</code>; the broker does not deserialize the body for subscription rules.</p>
+<pre class="code" data-lang="javascript">const sender = client.createSender("order-events");
+try {
+  await sender.sendMessages({
+    body: { orderId: "ORD-123", total: 149.50 },
+    messageId: "order-created:ORD-123",
+    correlationId: "order:ORD-123",
+    subject: "OrderCreated.v1",
+    contentType: "application/json",
+    applicationProperties: { region: "us", priority: 3 }
+  });
+} finally {
+  await sender.close();
+}</pre><p>Reuse the same <code>messageId</code> for retries of one logical event. Use a new ID for a later event about the same aggregate.</p></section>
+
+    <section id="subscribe" class="section-card reveal"><h2>Process one subscription</h2><p>Create a receiver with topic and subscription names. A receiver subscription is callback-driven; <code>receiveMessages</code> provides explicit pull control.</p>
+<pre class="code" data-lang="javascript">const receiver = client.createReceiver("order-events", "inventory", {
+  receiveMode: "peekLock",
+  maxAutoLockRenewalDurationInMs: 300_000
+});
+
+const handlers = receiver.subscribe({
+  processMessage: async message =&gt; {
+    try {
+      await reserveInventory(message.body);
+      await receiver.completeMessage(message);
+    } catch (error) {
+      if (error instanceof InvalidOrderError) {
+        await receiver.deadLetterMessage(message, {
+          deadLetterReason: "InvalidOrder",
+          deadLetterErrorDescription: error.message
+        });
+      } else {
+        await receiver.abandonMessage(message);
+      }
+    }
+  },
+  processError: async args =&gt; console.error(args.error)
+}, {
+  autoCompleteMessages: false,
+  maxConcurrentCalls: 4
+});</pre><p>Close the subscription, receiver, and shared client during graceful shutdown. Settlement affects only the <code>inventory</code> copy.</p></section>
+
+    <section id="filters" class="section-card reveal"><h2>Manage subscription rules</h2><p>A subscription starts with <code>$Default</code>, which matches all messages. Delete it before creating selective rules.</p>
+<pre class="code" data-lang="javascript">const admin = new ServiceBusAdministrationClient(fqns, credential);
+
+await admin.deleteRule("order-events", "inventory", "$Default");
+await admin.createRule("order-events", "inventory", "UsOrders", {
+  sqlExpression: "region = 'us' AND priority &gt;= 2"
+});
+await admin.createRule("order-events", "billing", "OrderCreated", {
+  subject: "OrderCreated.v1"
+});</pre>
+      <div class="property-reference" aria-label="JavaScript subscription filter choices"><article class="property-entry"><div class="property-entry-header"><h4>SQL filter</h4><div><span>Shape</span><code>{ sqlExpression }</code></div><div><span>Use</span>Expressions and ranges</div></div><div class="property-entry-details property-entry-details-single"><div><h5>Contract rule</h5><p>Keep property names, casing, and JavaScript value types stable across publishers.</p></div></div></article><article class="property-entry"><div class="property-entry-header"><h4>Correlation filter</h4><div><span>Shape</span>Exact-match fields</div><div><span>Use</span>Subject, correlation, properties</div></div><div class="property-entry-details property-entry-details-single"><div><h5>Contract rule</h5><p>Prefer this optimized filter when routing requires only exact equality matches.</p></div></div></article></div></section>
+
+    <section id="operations" class="section-card reveal"><h2>Operational design</h2><ul><li>Deploy one independently scalable worker role per subscription capability.</li><li>Monitor active, dead-letter, and oldest-message age per subscription.</li><li>Keep receivers long-lived; do not create one for every message.</li><li>Create a dedicated receiver with <code>subQueueType: "deadLetter"</code> for recovery.</li><li>Keep administration operations outside the publish and receive hot paths.</li></ul><p><strong>References:</strong> <a href="https://learn.microsoft.com/javascript/api/@azure/service-bus/servicebusclient">ServiceBusClient</a>, <a href="https://learn.microsoft.com/javascript/api/@azure/service-bus/servicebusadministrationclient">administration client</a>, and <a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-nodejs-how-to-use-topics-subscriptions">JavaScript topics and subscriptions</a>.</p></section>
+
+    <nav class="pager" aria-label="Reference pagination"><a class="prev" href="../java/topic-processing.html"><small>Previous</small><strong>&lt;- Java</strong></a><a class="next" href="../python/topic-processing.html"><small>Next</small><strong>Python -&gt;</strong></a></nav>
+  </main><aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#setup">Package and topology</a><a href="#publish">Publish to a topic</a><a href="#subscribe">Process a subscription</a><a href="#filters">Subscription rules</a><a href="#operations">Operational design</a></aside></div>
+</div><script type="module" src="../../assets/site.js"></script></body></html>

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Working with Queues - .NET - Azure Service Bus Workshop</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="queue-dotnet">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../../queues.html">Working with Queues</a><span class="sep">/</span><span>.NET</span></nav>
+    <header class="hero">
+      <h1>Working with queues in .NET</h1>
+      <p class="subtitle">Map Service Bus processing decisions to processors, receivers, options, settlement APIs, sessions, and client lifetimes in Azure.Messaging.ServiceBus.</p>
+      <div class="badge-row"><span class="badge">C# / .NET 8+</span><span class="badge">Azure.Messaging.ServiceBus</span><span class="badge">Processor and receiver models</span></div>
+    </header>
+    <div class="layout">
+      <main class="content">
+        <section id="setup" class="section-card reveal">
+          <h2>Package, authentication, and connection</h2>
+          <p>Install <code>Azure.Messaging.ServiceBus</code> and <code>Azure.Identity</code>. Use <code>DefaultAzureCredential</code> locally and managed identity for Azure-hosted workloads. Grant producers <strong>Azure Service Bus Data Sender</strong> and consumers <strong>Azure Service Bus Data Receiver</strong> on the required namespace or queue.</p>
+<pre class="code" data-lang="powershell">dotnet add package Azure.Messaging.ServiceBus
+dotnet add package Azure.Identity</pre>
+<pre class="code" data-lang="csharp">using Azure.Identity;
+using Azure.Messaging.ServiceBus;
+
+string fqns = Environment.GetEnvironmentVariable("SERVICEBUS_FQNS")
+    ?? throw new InvalidOperationException("Set SERVICEBUS_FQNS.");
+
+await using var client = new ServiceBusClient(fqns, new DefaultAzureCredential());</pre>
+          <div class="callout"><strong>Production identity:</strong> <code>DefaultAzureCredential</code> can select a workload or managed identity without changing application code. Do not embed connection strings or keys.</div>
+        </section>
+
+        <section id="send" class="section-card reveal">
+          <h2>Send to a queue</h2>
+          <p>Create one <code>ServiceBusSender</code> per destination and reuse it. <code>ServiceBusMessage</code> holds the body and sender-assigned envelope fields; <code>ServiceBusReceivedMessage</code> adds broker delivery metadata on receive.</p>
+<pre class="code" data-lang="csharp">await using ServiceBusSender sender = client.CreateSender("orders-processing");
+
+var message = new ServiceBusMessage(BinaryData.FromObjectAsJson(new
+{
+    orderId = "ORD-123",
+    status = "created"
+}))
+{
+    MessageId = Guid.NewGuid().ToString(),
+    CorrelationId = "order:ORD-123",
+    Subject = "OrderCreated.v1",
+    ContentType = "application/json",
+    TimeToLive = TimeSpan.FromMinutes(30)
+};
+message.ApplicationProperties["schemaVersion"] = 1;
+
+await sender.SendMessageAsync(message);</pre>
+          <p>For multiple messages, use <code>CreateMessageBatchAsync</code> and check <code>TryAddMessage</code>. A collection with too much encoded data is rejected even when each message fits individually.</p>
+        </section>
+
+        <section id="message-fields" class="section-card reveal">
+          <h2>.NET message objects and fields</h2>
+          <div class="property-reference" aria-label=".NET Service Bus message field mapping">
+            <article class="property-entry"><div class="property-entry-header"><h4><code>Body</code></h4><div><span>Type</span><code>BinaryData</code></div><div><span>Set on</span><code>ServiceBusMessage</code></div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>The opaque business payload. Construct from UTF-8 text, bytes, streams, or <code>BinaryData.FromObjectAsJson</code>.</p></div><div><h5>Use</h5><p>Set <code>ContentType</code>, version the contract, and deserialize only after validating the expected type and schema.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>MessageId</code></h4><div><span>Type</span><code>string</code></div><div><span>Limit</span>128 characters</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p>Identity of one logical message and the key used by broker duplicate detection.</p></div><div><h5>Use</h5><p>Generate once and persist with an outbox record. Reuse it when retrying the same send; create a new value for a new event or command.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>CorrelationId</code> and <code>Subject</code></h4><div><span>Type</span><code>string</code></div><div><span>Purpose</span>Workflow and contract</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p><code>CorrelationId</code> connects related operations. <code>Subject</code> names the business contract; older APIs call it Label.</p></div><div><h5>Use</h5><p>Propagate a workflow value such as <code>order:ORD-123</code> and use a stable contract name such as <code>OrderCreated.v1</code>.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ContentType</code> and <code>ApplicationProperties</code></h4><div><span>Types</span><code>string</code>, <code>IDictionary&lt;string, object&gt;</code></div><div><span>Purpose</span>Format and routing metadata</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p><code>ContentType</code> describes serialization. Application properties contain compact scalar metadata available to filters and receivers.</p></div><div><h5>Use</h5><p>Use MIME values such as <code>application/json</code>. Put schema version, tenant, or region in application properties, never secrets or payload fragments.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>SessionId</code>, <code>PartitionKey</code>, and <code>TimeToLive</code></h4><div><span>Types</span><code>string</code>, <code>TimeSpan</code></div><div><span>Purpose</span>Ordering, affinity, expiration</div></div><div class="property-entry-details"><div><h5>Meaning</h5><p><code>SessionId</code> selects an ordered session; <code>PartitionKey</code> selects partition affinity; <code>TimeToLive</code> sets a message-specific lifetime.</p></div><div><h5>Use</h5><p>Every message to a session queue needs <code>SessionId</code>. When both IDs are set they must match. TTL can't effectively exceed the queue default.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Received-only fields</h4><div><span>Object</span><code>ServiceBusReceivedMessage</code></div><div><span>Owner</span>Service Bus</div></div><div class="property-entry-details"><div><h5>Fields</h5><p><code>SequenceNumber</code>, <code>EnqueuedTime</code>, <code>ExpiresAt</code>, <code>DeliveryCount</code>, <code>LockToken</code>, <code>LockedUntil</code>, <code>DeadLetterReason</code>, and <code>DeadLetterErrorDescription</code>.</p></div><div><h5>Use</h5><p>Use them for settlement, lock monitoring, DLQ diagnosis, and operational telemetry. Do not use sequence number as a cross-queue business ID.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="processor" class="section-card reveal">
+          <h2>Continuous processing with <code>ServiceBusProcessor</code></h2>
+          <p>The processor owns the background receive loop, dispatches callbacks, renews locks, and reports infrastructure failures through the error callback. Register both handlers before starting it.</p>
+<pre class="code" data-lang="csharp">await using ServiceBusProcessor processor = client.CreateProcessor("orders", new ServiceBusProcessorOptions
+{
+    AutoCompleteMessages = false,
+    MaxConcurrentCalls = 4,
+    MaxAutoLockRenewalDuration = TimeSpan.FromMinutes(5),
+    PrefetchCount = 0,
+    ReceiveMode = ServiceBusReceiveMode.PeekLock,
+    Identifier = $"orders-worker:{Environment.MachineName}"
+});
+
+processor.ProcessMessageAsync += async args =&gt;
+{
+    try
+    {
+        await ProcessOrderAsync(args.Message.Body.ToString());
+        await args.CompleteMessageAsync(args.Message);
+    }
+    catch (PermanentOrderException exception)
+    {
+        await args.DeadLetterMessageAsync(args.Message, "InvalidOrder", exception.Message);
+    }
+    catch
+    {
+        await args.AbandonMessageAsync(args.Message);
+    }
+};
+
+processor.ProcessErrorAsync += args =&gt;
+{
+    Console.Error.WriteLine($"{args.ErrorSource} {args.EntityPath}: {args.Exception}");
+    return Task.CompletedTask;
+};
+
+await processor.StartProcessingAsync();
+await shutdownSignal.Task;
+await processor.StopProcessingAsync();</pre>
+          <p>Do not assume the error handler represents one business message. It reports receive-pump, connection, lock, and callback infrastructure failures; settlement remains the responsibility of the message callback.</p>
+        </section>
+
+        <section id="options" class="section-card reveal">
+          <h2><code>ServiceBusProcessorOptions</code> mapping</h2>
+          <div class="property-reference" aria-label=".NET ServiceBusProcessorOptions reference">
+            <article class="property-entry"><div class="property-entry-header"><h4><code>AutoCompleteMessages</code></h4><div><span>Data type</span><code>bool</code></div><div><span>Default</span><code>true</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Completes an unsettled message when the callback returns successfully. An exception abandons an unsettled message.</p></div><div><h5>Strategy</h5><p>Set <code>false</code> when code must explicitly choose complete, abandon, defer, or dead-letter. Every successful path must then settle or allow the lock to expire.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>MaxConcurrentCalls</code></h4><div><span>Data type</span><code>int</code></div><div><span>Default</span><code>1</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Limits concurrent message callbacks on this processor instance.</p></div><div><h5>Strategy</h5><p>Potential concurrency is replicas multiplied by this value. Increase for independent I/O-bound work only while downstream capacity and lock completion remain healthy.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>MaxAutoLockRenewalDuration</code></h4><div><span>Data type</span><code>TimeSpan</code></div><div><span>Default</span>5 minutes</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Sets the total period for automatic message-lock renewal while a callback runs. The entity's lock duration controls each individual renewal.</p></div><div><h5>Strategy</h5><p>Use a finite value above the longest expected successful handler time. Zero disables auto renewal; an infinite value can hide a stuck callback.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>PrefetchCount</code></h4><div><span>Data type</span><code>int</code></div><div><span>Default</span><code>0</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Caches messages locally before callbacks request them. Locks are already running while messages wait in the cache.</p></div><div><h5>Strategy</h5><p>Increase gradually for fast, steady handlers. Keep it low for large messages, short locks, slow processing, or bursty traffic.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ReceiveMode</code></h4><div><span>Data type</span><code>ServiceBusReceiveMode</code></div><div><span>Default</span><code>PeekLock</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p><code>PeekLock</code> requires settlement. <code>ReceiveAndDelete</code> removes a message as it is transferred.</p></div><div><h5>Strategy</h5><p>Use <code>PeekLock</code> for business workloads. Use <code>ReceiveAndDelete</code> only when message loss after transfer is acceptable.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>SubQueue</code></h4><div><span>Data type</span><code>SubQueue</code></div><div><span>Default</span><code>None</code></div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Selects the main entity, dead-letter subqueue, or transfer dead-letter subqueue.</p></div><div><h5>Strategy</h5><p>Use a separate processor or receiver with <code>SubQueue.DeadLetter</code> for intentional recovery. Keep the normal worker on <code>None</code>.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>Identifier</code></h4><div><span>Data type</span><code>string</code></div><div><span>Default</span>Generated unique value</div></div><div class="property-entry-details"><div><h5>Behavior</h5><p>Adds a diagnostic processor name to selected logs and exceptions. It does not affect message identity or routing.</p></div><div><h5>Strategy</h5><p>Use a role plus unique replica suffix so operators can identify the failing processor instance.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="receiver" class="section-card reveal">
+          <h2>Pull receiving with <code>ServiceBusReceiver</code></h2>
+          <p>Use a receiver when code must control receive timing, batch size, peeking, deferred retrieval, or a focused dead-letter workflow.</p>
+<pre class="code" data-lang="csharp">await using ServiceBusReceiver receiver = client.CreateReceiver("orders", new ServiceBusReceiverOptions
+{
+    ReceiveMode = ServiceBusReceiveMode.PeekLock,
+    PrefetchCount = 0,
+    Identifier = $"orders-batch:{Environment.MachineName}"
+});
+
+IReadOnlyList&lt;ServiceBusReceivedMessage&gt; messages =
+    await receiver.ReceiveMessagesAsync(maxMessages: 20, maxWaitTime: TimeSpan.FromSeconds(5));
+
+foreach (ServiceBusReceivedMessage message in messages)
+{
+    try
+    {
+        await ProcessOrderAsync(message.Body.ToString());
+        await receiver.CompleteMessageAsync(message);
+    }
+    catch
+    {
+        await receiver.AbandonMessageAsync(message);
+    }
+}</pre>
+          <p><code>ReceiveMessagesAsync</code> returns up to the requested count and may return fewer. For long-running pull-based work, call <code>RenewMessageLockAsync</code> before expiry or design the work to finish within the entity lock duration.</p>
+        </section>
+
+        <section id="objects" class="section-card reveal">
+          <h2>Choose the .NET object</h2>
+          <div class="property-reference" aria-label=".NET Service Bus object selection">
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusClient</code></h4><div><span>Creates</span>Senders, receivers, processors</div><div><span>Lifetime</span>Application</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Sharing a namespace connection and common client configuration.</p></div><div><h5>Lifecycle</h5><p>Create one per namespace, credential, and configuration; dispose it after all child objects stop.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusSender</code></h4><div><span>Create with</span><code>CreateSender</code></div><div><span>Lifetime</span>Long-lived per entity</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Sending, scheduling, cancellation, and creating <code>ServiceBusMessageBatch</code>.</p></div><div><h5>Lifecycle</h5><p>Reuse it instead of opening a sender per message.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusProcessor</code></h4><div><span>Create with</span><code>CreateProcessor</code></div><div><span>Lifetime</span>Worker</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Continuous event-driven queue or subscription processing.</p></div><div><h5>Lifecycle</h5><p>Register handlers, start once, stop gracefully, then dispose.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusReceiver</code></h4><div><span>Create with</span><code>CreateReceiver</code></div><div><span>Lifetime</span>Consuming workflow</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Pull receive, peek, deferred retrieval, manual renewal and settlement, or DLQ access.</p></div><div><h5>Lifecycle</h5><p>Reuse it for the same entity and options; settle through the receiver that delivered the message.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4>Session clients</h4><div><span>Create with</span><code>CreateSessionProcessor</code> or <code>Accept*SessionAsync</code></div><div><span>Lifetime</span>Worker or session</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Ordered, exclusive processing by <code>SessionId</code>. The processor discovers sessions; a receiver accepts a specific or next session.</p></div><div><h5>Tuning</h5><p>For <code>ServiceBusSessionProcessor</code>, maximum callbacks are approximately <code>MaxConcurrentSessions x MaxConcurrentCallsPerSession</code>.</p></div></div></article>
+            <article class="property-entry"><div class="property-entry-header"><h4><code>ServiceBusAdministrationClient</code></h4><div><span>Package</span><code>Azure.Messaging.ServiceBus</code></div><div><span>Lifetime</span>Administration workflow</div></div><div class="property-entry-details"><div><h5>Use it for</h5><p>Entity definitions, rules, and runtime properties.</p></div><div><h5>Lifecycle</h5><p>Keep management operations off the message hot path and prefer infrastructure as code for stable topology.</p></div></div></article>
+          </div>
+        </section>
+
+        <section id="variants" class="section-card reveal">
+          <h2>Sessions, subscriptions, and dead-letter queues</h2>
+          <ul>
+            <li>For a topic subscription, call <code>CreateProcessor(topicName, subscriptionName, options)</code> or <code>CreateReceiver(topicName, subscriptionName, options)</code>.</li>
+            <li>For continuous session processing, use <code>CreateSessionProcessor</code> and <code>ServiceBusSessionProcessorOptions</code>.</li>
+            <li>For one explicit session, call <code>AcceptSessionAsync</code> or <code>AcceptNextSessionAsync</code> and settle through the returned session receiver.</li>
+            <li>For dead-letter recovery, use a separate receiver with <code>SubQueue = SubQueue.DeadLetter</code>; inspect reason and description before resubmitting corrected work.</li>
+          </ul>
+          <p><strong>References:</strong> <a href="https://learn.microsoft.com/dotnet/api/azure.messaging.servicebus.servicebusprocessoroptions">processor options</a>, <a href="https://learn.microsoft.com/dotnet/api/azure.messaging.servicebus.servicebusclient">client factory methods</a>, and <a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-dotnet-how-to-use-topics-subscriptions">.NET topics and subscriptions</a>.</p>
+        </section>
+
+        <nav class="pager" aria-label="Reference pagination"><a class="prev" href="../../queues.html"><small>Previous</small><strong>&lt;- Working with Queues</strong></a><a class="next" href="../java/queue-processing.html"><small>Next</small><strong>Java -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#setup">Package and authentication</a><a href="#send">Send to a queue</a><a href="#message-fields">Message fields</a><a href="#processor">Continuous processor</a><a href="#options">Processor options</a><a href="#receiver">Pull receiver</a><a href="#objects">Object guide</a><a href="#variants">Sessions and DLQ</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

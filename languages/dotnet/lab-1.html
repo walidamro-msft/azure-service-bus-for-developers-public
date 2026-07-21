@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 1: Queue-Based Order Intake - .NET Labs</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="dotnet">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../dotnet.html">.NET labs</a><span class="sep">/</span><span>Lab 1</span></nav>
+    <header class="hero"><h1>Lab 1 - Queue-based order intake</h1><p class="subtitle">Create a Service Bus queue, then build separate producer and receiver console applications.</p><div class="badge-row"><span class="badge">60 minutes</span><span class="badge">Two console apps</span><span class="badge">Queues</span></div></header>
+    <div class="layout">
+      <main class="content">
+        <section id="case-study" class="section-card reveal">
+          <h2>Case study: protect checkout from traffic spikes</h2>
+          <p>Contoso Shop must accept orders even when the fulfilment service is busy or temporarily offline. The checkout producer writes each order to a durable queue and returns immediately. A separate fulfilment receiver drains the queue at its own pace.</p>
+<pre class="mermaid">flowchart LR
+  C[Checkout producer] -- OrderCreated --&gt; Q[orders queue]
+  Q -- competing consumer --&gt; F[Fulfilment receiver]</pre>
+          <p><strong>Outcome:</strong> You will deploy the queue, build two independent console applications, send ten orders, and prove that the receiver settles every message.</p>
+        </section>
+
+        <section id="provision" class="section-card reveal">
+          <h2>1. Provision the queue</h2>
+          <p>Use <strong>Standard</strong> so the same namespace can support topics and sessions in later labs. Basic is sufficient for a queue-only experiment; Premium is appropriate when production requires dedicated capacity, private endpoints, or predictable latency.</p>
+          <h3>Option A: Azure portal</h3>
+          <ol>
+            <li>Open the <a href="https://portal.azure.com/#create/Microsoft.ServiceBus.1">Create a Service Bus namespace</a> page.</li>
+            <li>Select your subscription, create or select <code>rg-sb-workshop</code>, enter a globally unique namespace such as <code>sb-contoso-&lt;unique&gt;</code>, choose a region, and select the <strong>Standard</strong> pricing tier.</li>
+            <li>Select <strong>Review + create</strong>, then <strong>Create</strong>. When deployment finishes, open the namespace.</li>
+            <li>Under <strong>Entities</strong>, select <strong>Queues</strong> and <strong>+ Queue</strong>. Set the name to <code>orders</code>, set <strong>Max delivery count</strong> to <code>5</code>, keep the other defaults, and select <strong>Create</strong>.</li>
+            <li>On the namespace <strong>Overview</strong> page, select the <strong>Local Authentication</strong> status, set it to <strong>Enabled</strong>, and save the change. If the <strong>Shared access policies</strong> page displays a warning that SAS key authentication is disabled, select the link in that warning to open the same setting.</li>
+            <li>Under <strong>Settings</strong>, open <strong>Shared access policies</strong>, select <strong>+ Add</strong>, create a policy named <code>ProducerSAS</code>, select only <strong>Send</strong>, and select <strong>Create</strong>. Do not select <strong>Listen</strong> or <strong>Manage</strong>.</li>
+            <li>Select <strong>+ Add</strong> again, create a policy named <code>ReceiverSAS</code>, select only <strong>Listen</strong>, and select <strong>Create</strong>. Do not select <strong>Send</strong> or <strong>Manage</strong>.</li>
+            <li>Open <code>ProducerSAS</code> and copy its <strong>Primary key</strong> for the producer settings. Then open <code>ReceiverSAS</code> and copy its <strong>Primary key</strong> for the receiver settings.</li>
+            <li>On the namespace <strong>Overview</strong> page, copy the hostname ending in <code>.servicebus.windows.net</code>. Use only the FQDN, for example <code>sb-contoso-12345.servicebus.windows.net</code>: do not include <code>https://</code>, a trailing slash, or the queue name.</li>
+          </ol>
+          <h3>Option B: Azure CLI</h3>
+<pre class="code" data-lang="powershell">az login
+$suffix = Get-Random -Maximum 99999
+$resourceGroup = "rg-sb-workshop"
+$namespace = "sb-contoso-$suffix"
+
+az group create --name $resourceGroup --location eastus
+az servicebus namespace create --resource-group $resourceGroup --name $namespace --location eastus --sku Standard
+az servicebus namespace update --resource-group $resourceGroup --name $namespace --disable-local-auth false
+az servicebus queue create --resource-group $resourceGroup --namespace-name $namespace --name orders --max-delivery-count 5
+
+az servicebus namespace authorization-rule create --resource-group $resourceGroup --namespace-name $namespace --name ProducerSAS --rights Send
+az servicebus namespace authorization-rule create --resource-group $resourceGroup --namespace-name $namespace --name ReceiverSAS --rights Listen
+$producerSasKey = az servicebus namespace authorization-rule keys list --resource-group $resourceGroup --namespace-name $namespace --name ProducerSAS --query primaryKey -o tsv
+$receiverSasKey = az servicebus namespace authorization-rule keys list --resource-group $resourceGroup --namespace-name $namespace --name ReceiverSAS --query primaryKey -o tsv
+
+"Producer settings"
+[PSCustomObject]@{
+  FullyQualifiedNamespace = "$namespace.servicebus.windows.net"
+  SasKeyName = "ProducerSAS"
+  SasKey = $producerSasKey
+  QueueName = "orders"
+} | Format-List
+
+"Receiver settings"
+[PSCustomObject]@{
+  FullyQualifiedNamespace = "$namespace.servicebus.windows.net"
+  SasKeyName = "ReceiverSAS"
+  SasKey = $receiverSasKey
+  QueueName = "orders"
+} | Format-List</pre>
+          <p>Copy the first four displayed values into the producer's <code>appsettings.json</code> and the second four into the receiver's file.</p>
+          <div class="callout"><strong>Important:</strong> SAS authentication works only when namespace local authentication is enabled. Complete either Option A or Option B, not both. Treat the SAS key as a secret and do not commit either <code>appsettings.json</code> file to source control.</div>
+        </section>
+
+        <section id="projects" class="section-card reveal">
+          <h2>2. Create two console applications</h2>
+<pre class="code" data-lang="powershell">mkdir lab1-queue
+cd lab1-queue
+dotnet new sln --name Contoso.QueueLab
+dotnet new console --name Contoso.Checkout.Producer
+dotnet new console --name Contoso.Fulfilment.Receiver
+dotnet sln add Contoso.Checkout.Producer Contoso.Fulfilment.Receiver
+dotnet add Contoso.Checkout.Producer package Azure.Messaging.ServiceBus
+dotnet add Contoso.Fulfilment.Receiver package Azure.Messaging.ServiceBus
+dotnet add Contoso.Checkout.Producer package Microsoft.Extensions.Configuration.Json
+dotnet add Contoso.Fulfilment.Receiver package Microsoft.Extensions.Configuration.Json
+</pre>
+          <h3>Producer settings</h3>
+          <p>Create <code>Contoso.Checkout.Producer/appsettings.json</code> with the values copied during provisioning:</p>
+<pre class="code" data-lang="json">{
+  "ServiceBus": {
+    "FullyQualifiedNamespace": "sb-contoso-12345.servicebus.windows.net",
+    "SasKeyName": "ProducerSAS",
+    "SasKey": "&lt;ProducerSAS-primary-key&gt;",
+    "QueueName": "orders"
+  }
+}</pre>
+          <p>Use this <code>appsettings.json</code> file as the configuration source for the producer in this lab. Do not configure these values through environment variables.</p>
+          <h3>Receiver settings</h3>
+          <p>Create <code>Contoso.Fulfilment.Receiver/appsettings.json</code> with the receiver policy and key:</p>
+<pre class="code" data-lang="json">{
+  "ServiceBus": {
+    "FullyQualifiedNamespace": "sb-contoso-12345.servicebus.windows.net",
+    "SasKeyName": "ReceiverSAS",
+    "SasKey": "&lt;ReceiverSAS-primary-key&gt;",
+    "QueueName": "orders"
+  }
+}</pre>
+          <p>In both project files, add this item group inside the root <code>&lt;Project&gt;</code> element so <code>appsettings.json</code> is copied beside the compiled application:</p>
+<pre class="code" data-lang="xml">&lt;ItemGroup&gt;
+  &lt;None Update="appsettings.json"&gt;
+    &lt;CopyToOutputDirectory&gt;PreserveNewest&lt;/CopyToOutputDirectory&gt;
+  &lt;/None&gt;
+&lt;/ItemGroup&gt;</pre>
+          <p>The producer and receiver are separate processes. <code>ProducerSAS</code> can only send messages, while <code>ReceiverSAS</code> can only receive and settle messages. Neither application requires the <strong>Manage</strong> claim. The FQDN selects the namespace, while <code>QueueName</code> is passed to <code>CreateSender</code> or <code>CreateProcessor</code> to select the <code>orders</code> queue inside that namespace.</p>
+          <div class="callout"><strong>Important:</strong> Both settings files contain the SAS key. Keep them local for this lab and add <code>Contoso.Checkout.Producer/appsettings.json</code> and <code>Contoso.Fulfilment.Receiver/appsettings.json</code> to your repository's <code>.gitignore</code> before committing any project files. This lab uses <code>appsettings.json</code> only and intentionally avoids environment-variable configuration.</div>
+        </section>
+
+        <section id="producer" class="section-card reveal">
+          <h2>3. Build the checkout producer</h2>
+          <p>Replace <code>Contoso.Checkout.Producer/Program.cs</code> with:</p>
+<pre class="code" data-lang="csharp">using Azure;
+using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Configuration;
+using System.Text.Json;
+
+// Load the settings file copied beside the compiled application.
+IConfiguration configuration = new ConfigurationBuilder()
+  .SetBasePath(AppContext.BaseDirectory)
+  .AddJsonFile("appsettings.json", optional: false)
+  .Build();
+
+string fqns = configuration["ServiceBus:FullyQualifiedNamespace"]
+  ?? throw new InvalidOperationException("Set ServiceBus:FullyQualifiedNamespace in appsettings.json.");
+string sasKeyName = configuration["ServiceBus:SasKeyName"]
+  ?? throw new InvalidOperationException("Set ServiceBus:SasKeyName in appsettings.json.");
+string sasKey = configuration["ServiceBus:SasKey"]
+  ?? throw new InvalidOperationException("Set ServiceBus:SasKey in appsettings.json.");
+string queueName = configuration["ServiceBus:QueueName"]
+  ?? throw new InvalidOperationException("Set ServiceBus:QueueName in appsettings.json.");
+
+// Authenticate with the send-only ProducerSAS policy.
+var credential = new AzureNamedKeyCredential(sasKeyName, sasKey);
+await using var client = new ServiceBusClient(fqns, credential);
+
+// The sender targets the queue named in appsettings.json within this namespace.
+await using ServiceBusSender sender = client.CreateSender(queueName);
+
+for (int number = 1; number &lt;= 10; number++)
+{
+    string orderId = $"ORD-{number:000}";
+    string body = JsonSerializer.Serialize(new { orderId, product = "AZ-BOOK", quantity = number });
+
+    // MessageId supports tracing and Subject identifies the business event type.
+    var message = new ServiceBusMessage(body)
+    {
+        MessageId = orderId,
+        Subject = "OrderCreated",
+        ContentType = "application/json"
+    };
+
+    await sender.SendMessageAsync(message);
+    Console.WriteLine($"Sent {orderId}");
+}</pre>
+        </section>
+
+        <section id="receiver" class="section-card reveal">
+          <h2>4. Build the fulfilment receiver</h2>
+          <p>Replace <code>Contoso.Fulfilment.Receiver/Program.cs</code> with:</p>
+<pre class="code" data-lang="csharp">using Azure;
+using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Configuration;
+using System.Text.Json;
+
+// Load the settings file copied beside the compiled application.
+IConfiguration configuration = new ConfigurationBuilder()
+  .SetBasePath(AppContext.BaseDirectory)
+  .AddJsonFile("appsettings.json", optional: false)
+  .Build();
+
+string fqns = configuration["ServiceBus:FullyQualifiedNamespace"]
+  ?? throw new InvalidOperationException("Set ServiceBus:FullyQualifiedNamespace in appsettings.json.");
+string sasKeyName = configuration["ServiceBus:SasKeyName"]
+  ?? throw new InvalidOperationException("Set ServiceBus:SasKeyName in appsettings.json.");
+string sasKey = configuration["ServiceBus:SasKey"]
+  ?? throw new InvalidOperationException("Set ServiceBus:SasKey in appsettings.json.");
+string queueName = configuration["ServiceBus:QueueName"]
+  ?? throw new InvalidOperationException("Set ServiceBus:QueueName in appsettings.json.");
+
+// Authenticate with the listen-only ReceiverSAS policy.
+var credential = new AzureNamedKeyCredential(sasKeyName, sasKey);
+await using var client = new ServiceBusClient(fqns, credential);
+
+// Allow the processor to handle up to two messages concurrently.
+ServiceBusProcessor processor = client.CreateProcessor(queueName, new ServiceBusProcessorOptions
+{
+    AutoCompleteMessages = false,
+    MaxConcurrentCalls = 2
+});
+
+processor.ProcessMessageAsync += async args =&gt;
+{
+    using JsonDocument order = JsonDocument.Parse(args.Message.Body);
+    Console.WriteLine($"Received {order.RootElement.GetProperty("orderId").GetString()} " +
+                      $"(delivery {args.Message.DeliveryCount})");
+
+    // Explicit settlement removes the message only after processing succeeds.
+    await args.CompleteMessageAsync(args.Message);
+};
+
+// Processor-level failures, such as connection errors, arrive on this callback.
+processor.ProcessErrorAsync += args =&gt;
+{
+    Console.Error.WriteLine(args.Exception.Message);
+    return Task.CompletedTask;
+};
+
+await processor.StartProcessingAsync();
+Console.WriteLine("Receiver is running. Press Enter to stop.");
+Console.ReadLine();
+await processor.StopProcessingAsync();</pre>
+        </section>
+
+        <section id="run" class="section-card reveal">
+          <h2>5. Run and verify</h2>
+          <p>After saving both <code>appsettings.json</code> files, open two terminals and run:</p>
+<pre class="code" data-lang="powershell"># Terminal 1: start the receiver
+dotnet run --project Contoso.Fulfilment.Receiver
+
+# Terminal 2: send ten orders
+dotnet run --project Contoso.Checkout.Producer</pre>
+          <p><strong>Expected result:</strong> The producer prints ten sent order IDs. The receiver prints those ten IDs and completes them. In the Azure portal, the queue's active message count returns to zero.</p>
+          <p><strong>Challenge:</strong> Stop the receiver, run the producer again, and inspect the queue count. Restart the receiver and observe the durable backlog drain. Then run two receiver instances and confirm each order is processed by only one competing consumer.</p>
+        </section>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="../dotnet.html"><small>Previous</small><strong>&lt;- .NET labs</strong></a><a class="next" href="lab-2.html"><small>Next</small><strong>Lab 2 -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#projects">2. Create apps</a><a href="#producer">3. Producer</a><a href="#receiver">4. Receiver</a><a href="#run">5. Run and verify</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

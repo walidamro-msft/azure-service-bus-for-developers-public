@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Lab 3: Session-Ordered Fulfilment - .NET Labs</title><script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+<link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" /><link rel="stylesheet" href="../../assets/site.css" /></head>
+<body data-root="../.." data-active="dotnet"><div class="page">
+<nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../dotnet.html">.NET labs</a><span class="sep">/</span><span>Lab 3</span></nav>
+<header class="hero"><h1>Lab 3 - Preserve each order's event sequence</h1><p class="subtitle">Provision a session-enabled queue, send interleaved workflows, and process each order in FIFO order.</p><div class="badge-row"><span class="badge">60 minutes</span><span class="badge">Two console apps</span><span class="badge">Sessions</span></div></header>
+<div class="layout"><main class="content">
+<section id="case-study" class="section-card reveal"><h2>Case study: ordered fulfilment workflows</h2><p>Payment, allocation, and dispatch events for many orders may share one queue. Events from different orders can run concurrently, but no order may dispatch before its own payment and allocation steps. A Service Bus session groups each order's messages under its order ID.</p>
+<pre class="mermaid">flowchart LR
+  S[Workflow producer] -- SessionId = order ID --&gt; Q[order-sessions queue]
+  Q -- one locked session --&gt; W1[Worker]
+  Q -- another locked session --&gt; W2[Worker]</pre></section>
+<section id="provision" class="section-card reveal"><h2>1. Provision a session-enabled queue</h2><p>Reuse the namespace from Lab 1. Session support must be enabled when the queue is created.</p>
+<h3>Option A: Azure portal</h3>
+<ol>
+    <li>In the Azure portal, open the Service Bus namespace created in Lab 1.</li>
+    <li>Under <strong>Entities</strong>, select <strong>Queues</strong>, then select <strong>+ Queue</strong>.</li>
+    <li>Enter <code>order-sessions</code>, enable <strong>Sessions</strong>, and set <strong>Max delivery count</strong> to <code>5</code>.</li>
+    <li>Select <strong>Create</strong>, open the queue, and verify that <strong>Requires session</strong> is enabled.</li>
+    <li>Copy the namespace hostname from Lab 1 and use it in each application's <code>appsettings.json</code>.</li>
+</ol>
+<div class="callout"><strong>Important:</strong> You cannot enable or disable sessions after a queue is created. Delete and recreate an incorrectly configured queue before sending messages.</div>
+<h3>Option B: Azure CLI</h3>
+<pre class="code" data-lang="powershell">az servicebus queue create --resource-group $resourceGroup --namespace-name $namespace --name order-sessions --enable-session true --max-delivery-count 5</pre>
+<p><strong>Checkpoint:</strong> Complete either Option A or Option B, not both. The portal shows <code>order-sessions</code> with sessions enabled and zero active messages.</p></section>
+<section id="projects" class="section-card reveal"><h2>2. Create producer and processor applications</h2>
+<pre class="code" data-lang="powershell">mkdir lab3-sessions
+cd lab3-sessions
+dotnet new console --name Contoso.Workflow.Producer
+dotnet new console --name Contoso.Workflow.Processor
+foreach ($project in @("Contoso.Workflow.Producer", "Contoso.Workflow.Processor")) {
+  dotnet add $project package Azure.Messaging.ServiceBus
+    dotnet add $project package Microsoft.Extensions.Configuration.Json
+}</pre></section>
+<section id="producer" class="section-card reveal"><h2>3. Send two interleaved order workflows</h2><p>Replace <code>Contoso.Workflow.Producer/Program.cs</code> with:</p>
+<h3>Producer settings</h3>
+<p>Create <code>Contoso.Workflow.Producer/appsettings.json</code>:</p>
+<pre class="code" data-lang="json">{
+    "ServiceBus": {
+        "FullyQualifiedNamespace": "sb-contoso-12345.servicebus.windows.net",
+        "SasKeyName": "ProducerSAS",
+        "SasKey": "&lt;ProducerSAS-primary-key&gt;",
+        "QueueName": "order-sessions"
+    }
+}</pre>
+<h3>Producer code</h3>
+<pre class="code" data-lang="csharp">using Azure;
+using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Configuration;
+
+// Load appsettings.json from the output directory.
+IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false)
+        .Build();
+
+string fqns = configuration["ServiceBus:FullyQualifiedNamespace"]
+        ?? throw new InvalidOperationException("Set ServiceBus:FullyQualifiedNamespace in appsettings.json.");
+string sasKeyName = configuration["ServiceBus:SasKeyName"]
+        ?? throw new InvalidOperationException("Set ServiceBus:SasKeyName in appsettings.json.");
+string sasKey = configuration["ServiceBus:SasKey"]
+        ?? throw new InvalidOperationException("Set ServiceBus:SasKey in appsettings.json.");
+string queueName = configuration["ServiceBus:QueueName"]
+        ?? throw new InvalidOperationException("Set ServiceBus:QueueName in appsettings.json.");
+
+// Authenticate with the send-only SAS policy and target the session-enabled queue.
+var credential = new AzureNamedKeyCredential(sasKeyName, sasKey);
+await using var client = new ServiceBusClient(fqns, credential);
+await using ServiceBusSender sender = client.CreateSender(queueName);
+
+string[] orderIds = ["ORD-101", "ORD-202"];
+string[] states = ["PaymentAccepted", "StockAllocated", "Dispatched"];
+foreach (string state in states)
+{
+    foreach (string orderId in orderIds)
+    {
+        // SessionId groups all messages for one order so that order is processed sequentially.
+        await sender.SendMessageAsync(new ServiceBusMessage(state)
+        {
+            SessionId = orderId,
+            MessageId = $"{orderId}-{state}",
+            Subject = state
+        });
+        Console.WriteLine($"Sent {orderId}: {state}");
+    }
+}</pre></section>
+<section id="processor" class="section-card reveal"><h2>4. Process sessions concurrently</h2><p>Create <code>Contoso.Workflow.Processor/appsettings.json</code> with the listen-only policy:</p>
+<pre class="code" data-lang="json">{
+    "ServiceBus": {
+        "FullyQualifiedNamespace": "sb-contoso-12345.servicebus.windows.net",
+        "SasKeyName": "ReceiverSAS",
+        "SasKey": "&lt;ReceiverSAS-primary-key&gt;",
+        "QueueName": "order-sessions"
+    }
+}</pre>
+<p>In both project files, add this item group inside the root <code>&lt;Project&gt;</code> element so <code>appsettings.json</code> is copied beside the compiled application:</p>
+<pre class="code" data-lang="xml">&lt;ItemGroup&gt;
+    &lt;None Update="appsettings.json"&gt;
+        &lt;CopyToOutputDirectory&gt;PreserveNewest&lt;/CopyToOutputDirectory&gt;
+    &lt;/None&gt;
+&lt;/ItemGroup&gt;</pre>
+<div class="callout"><strong>Important:</strong> This lab uses <code>appsettings.json</code> for Service Bus configuration and does not use environment variables. Keep both settings files local and add <code>Contoso.Workflow.Producer/appsettings.json</code> and <code>Contoso.Workflow.Processor/appsettings.json</code> to <code>.gitignore</code>.</div>
+<p>Replace <code>Contoso.Workflow.Processor/Program.cs</code> with:</p>
+<pre class="code" data-lang="csharp">using Azure;
+using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Configuration;
+
+// Load appsettings.json from the output directory.
+IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false)
+        .Build();
+
+string fqns = configuration["ServiceBus:FullyQualifiedNamespace"]
+        ?? throw new InvalidOperationException("Set ServiceBus:FullyQualifiedNamespace in appsettings.json.");
+string sasKeyName = configuration["ServiceBus:SasKeyName"]
+        ?? throw new InvalidOperationException("Set ServiceBus:SasKeyName in appsettings.json.");
+string sasKey = configuration["ServiceBus:SasKey"]
+        ?? throw new InvalidOperationException("Set ServiceBus:SasKey in appsettings.json.");
+string queueName = configuration["ServiceBus:QueueName"]
+        ?? throw new InvalidOperationException("Set ServiceBus:QueueName in appsettings.json.");
+
+// Authenticate with the listen-only SAS policy.
+var credential = new AzureNamedKeyCredential(sasKeyName, sasKey);
+await using var client = new ServiceBusClient(fqns, credential);
+ServiceBusSessionProcessor processor = client.CreateSessionProcessor(
+        queueName,
+    new ServiceBusSessionProcessorOptions
+    {
+        AutoCompleteMessages = false,
+        // Process multiple sessions in parallel, but keep FIFO within each session.
+        MaxConcurrentSessions = 2,
+        MaxConcurrentCallsPerSession = 1
+    });
+
+processor.ProcessMessageAsync += async args =&gt;
+{
+    // Messages inside one SessionId are delivered in order.
+    Console.WriteLine($"{args.Message.SessionId}: {args.Message.Body}");
+    await Task.Delay(300);
+    // Complete only after processing succeeds.
+    await args.CompleteMessageAsync(args.Message);
+};
+processor.ProcessErrorAsync += args =&gt;
+{
+    Console.Error.WriteLine(args.Exception.Message);
+    return Task.CompletedTask;
+};
+
+await processor.StartProcessingAsync();
+Console.WriteLine("Session processor is running. Press Enter to stop.");
+Console.ReadLine();
+await processor.StopProcessingAsync();</pre></section>
+<section id="run" class="section-card reveal"><h2>5. Run and verify ordering</h2>
+<pre class="code" data-lang="powershell"># Terminal 1
+dotnet run --project Contoso.Workflow.Processor
+
+# Terminal 2
+dotnet run --project Contoso.Workflow.Producer</pre>
+<p><strong>Expected result:</strong> Output for <code>ORD-101</code> and <code>ORD-202</code> may interleave, but each order always prints PaymentAccepted, StockAllocated, then Dispatched. The queue returns to zero active messages.</p><p><strong>Challenge:</strong> Add a third order and increase <code>MaxConcurrentSessions</code>. Then set it to one and compare throughput without changing per-order ordering.</p></section>
+<nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-2.html"><small>Previous</small><strong>&lt;- Lab 2</strong></a><a class="next" href="lab-4.html"><small>Next</small><strong>Lab 4 -&gt;</strong></a></nav></main>
+<aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#projects">2. Create apps</a><a href="#producer">3. Producer</a><a href="#processor">4. Processor</a><a href="#run">5. Run and verify</a></aside></div></div>
+<script type="module" src="../../assets/site.js"></script></body></html>

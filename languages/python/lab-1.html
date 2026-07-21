@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 1: Queue-Based Order Intake - Python Labs</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="python">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../python.html">Python labs</a><span class="sep">/</span><span>Lab 1</span></nav>
+    <header class="hero"><h1>Lab 1 - Queue-based order intake</h1><p class="subtitle">Create a Service Bus queue, then build separate producer and receiver Python applications.</p><div class="badge-row"><span class="badge">60 minutes</span><span class="badge">Two Python apps</span><span class="badge">Queues</span></div></header>
+    <div class="layout">
+      <main class="content">
+        <section id="case-study" class="section-card reveal">
+          <h2>Case study: protect checkout from traffic spikes</h2>
+          <p>Contoso Shop must accept orders even when the fulfilment service is busy or temporarily offline. The checkout producer writes each order to a durable queue and returns immediately. A separate fulfilment receiver drains the queue at its own pace.</p>
+<pre class="mermaid">flowchart LR
+  C[Checkout producer] -- OrderCreated --&gt; Q[orders queue]
+  Q -- competing consumer --&gt; F[Fulfilment receiver]</pre>
+          <p><strong>Outcome:</strong> You will deploy the queue, build two independently runnable Python applications, send ten orders, and prove that the receiver settles every message.</p>
+        </section>
+
+        <section id="provision" class="section-card reveal">
+          <h2>1. Provision the queue</h2>
+          <p>Use <strong>Standard</strong> so the same namespace can support topics and sessions in later labs. Basic is sufficient for a queue-only experiment; Premium is appropriate when production requires dedicated capacity, private endpoints, or predictable latency.</p>
+          <h3>Option A: Azure portal</h3>
+          <ol>
+            <li>Open the <a href="https://portal.azure.com/#create/Microsoft.ServiceBus.1">Create a Service Bus namespace</a> page.</li>
+            <li>Select your subscription, create or select <code>rg-sb-workshop</code>, enter a globally unique namespace such as <code>sb-contoso-&lt;unique&gt;</code>, choose a region, and select the <strong>Standard</strong> pricing tier.</li>
+            <li>Select <strong>Review + create</strong>, then <strong>Create</strong>. When deployment finishes, open the namespace.</li>
+            <li>Under <strong>Settings</strong>, open <strong>Shared access policies</strong> and disable <strong>Local Authentication</strong>. The applications use Microsoft Entra ID instead of access keys.</li>
+            <li>Under <strong>Entities</strong>, select <strong>Queues</strong> and <strong>+ Queue</strong>. Set the name to <code>orders</code>, set <strong>Max delivery count</strong> to <code>5</code>, keep the other defaults, and select <strong>Create</strong>.</li>
+            <li>Open <strong>Access control (IAM)</strong>, select <strong>Add &gt; Add role assignment</strong>, choose <strong>Azure Service Bus Data Owner</strong>, and assign it to your signed-in user.</li>
+            <li>On the namespace <strong>Overview</strong> page, copy the hostname ending in <code>.servicebus.windows.net</code>. Set that value as <code>SERVICEBUS_FQNS</code> in every terminal used by this lab.</li>
+          </ol>
+          <h3>Option B: Azure CLI</h3>
+<pre class="code" data-lang="powershell">az login
+$suffix = Get-Random -Maximum 99999
+$resourceGroup = "rg-sb-workshop"
+$namespace = "sb-contoso-$suffix"
+
+az group create --name $resourceGroup --location eastus
+az servicebus namespace create --resource-group $resourceGroup --name $namespace --location eastus --sku Standard --disable-local-auth true
+az servicebus queue create --resource-group $resourceGroup --namespace-name $namespace --name orders --max-delivery-count 5
+
+$namespaceId = az servicebus namespace show --resource-group $resourceGroup --name $namespace --query id -o tsv
+$userId = az ad signed-in-user show --query id -o tsv
+az role assignment create --assignee $userId --role "Azure Service Bus Data Owner" --scope $namespaceId
+$env:SERVICEBUS_FQNS = "$namespace.servicebus.windows.net"</pre>
+          <div class="callout"><strong>Note:</strong> Complete either Option A or Option B, not both. RBAC may take several minutes to propagate. Both applications read <code>SERVICEBUS_FQNS</code> from the environment.</div>
+        </section>
+
+        <section id="projects" class="section-card reveal">
+          <h2>2. Create two Python applications</h2>
+<pre class="code" data-lang="powershell">mkdir lab1-queue
+cd lab1-queue
+py -3.10 -m venv .venv
+Set-ExecutionPolicy -Scope Process Bypass
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install azure-servicebus azure-identity
+New-Item producer.py, receiver.py -ItemType File</pre>
+          <p>The producer and receiver are separate processes. This separation demonstrates that the services do not need to start, stop, or scale together.</p>
+        </section>
+
+        <section id="producer" class="section-card reveal">
+          <h2>3. Build the checkout producer</h2>
+          <p>Replace <code>producer.py</code> with:</p>
+<pre class="code" data-lang="python">import json
+import os
+
+from azure.identity import DefaultAzureCredential
+from azure.servicebus import ServiceBusClient, ServiceBusMessage
+
+fully_qualified_namespace = os.environ["SERVICEBUS_FQNS"]
+credential = DefaultAzureCredential()
+
+with ServiceBusClient(fully_qualified_namespace, credential) as client:
+    with client.get_queue_sender(queue_name="orders") as sender:
+        for number in range(1, 11):
+            order_id = f"ORD-{number:03d}"
+            body = json.dumps({"orderId": order_id, "product": "AZ-BOOK", "quantity": number})
+            message = ServiceBusMessage(
+                body,
+                message_id=order_id,
+                subject="OrderCreated",
+                content_type="application/json",
+            )
+            sender.send_messages(message)
+            print(f"Sent {order_id}")</pre>
+        </section>
+
+        <section id="receiver" class="section-card reveal">
+          <h2>4. Build the fulfilment receiver</h2>
+          <p>Replace <code>receiver.py</code> with:</p>
+<pre class="code" data-lang="python">import json
+import os
+
+from azure.identity import DefaultAzureCredential
+from azure.servicebus import ServiceBusClient
+
+fully_qualified_namespace = os.environ["SERVICEBUS_FQNS"]
+credential = DefaultAzureCredential()
+
+with ServiceBusClient(fully_qualified_namespace, credential) as client:
+    with client.get_queue_receiver(queue_name="orders", max_wait_time=20) as receiver:
+        print("Receiver is waiting for orders. Press Ctrl+C to stop.")
+        try:
+            for message in receiver:
+                order = json.loads(str(message))
+                print(f"Received {order['orderId']} (delivery {message.delivery_count})")
+                receiver.complete_message(message)
+        except KeyboardInterrupt:
+            print("Receiver stopped.")</pre>
+        </section>
+
+        <section id="run" class="section-card reveal">
+          <h2>5. Run and verify</h2>
+          <p>Open two terminals in <code>lab1-queue</code>, set the same <code>SERVICEBUS_FQNS</code> value in each, and run:</p>
+<pre class="code" data-lang="powershell"># Terminal 1: start the receiver
+.\.venv\Scripts\Activate.ps1
+$env:SERVICEBUS_FQNS = "&lt;namespace&gt;.servicebus.windows.net"
+python receiver.py
+
+# Terminal 2: send ten orders
+.\.venv\Scripts\Activate.ps1
+$env:SERVICEBUS_FQNS = "&lt;namespace&gt;.servicebus.windows.net"
+python producer.py</pre>
+          <p><strong>Expected result:</strong> The producer prints ten sent order IDs. The receiver prints those ten IDs and completes them. In the Azure portal, the queue's active message count returns to zero.</p>
+          <p><strong>Challenge:</strong> Stop the receiver, run the producer again, and inspect the queue count. Restart the receiver and observe the durable backlog drain. Then run two receiver instances and confirm each order is processed by only one competing consumer.</p>
+        </section>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="../python.html"><small>Previous</small><strong>&lt;- Python labs</strong></a><a class="next" href="lab-2.html"><small>Next</small><strong>Lab 2 -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#projects">2. Create apps</a><a href="#producer">3. Producer</a><a href="#receiver">4. Receiver</a><a href="#run">5. Run and verify</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

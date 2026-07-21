@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 3: Session-Ordered Fulfilment - Java Labs</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="java">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../java.html">Java labs</a><span class="sep">/</span><span>Lab 3</span></nav>
+    <header class="hero"><h1>Lab 3 - Preserve each order's event sequence</h1><p class="subtitle">Provision a session-enabled queue, send interleaved workflows, and process each order in FIFO order.</p><div class="badge-row"><span class="badge">60 minutes</span><span class="badge">Two Java apps</span><span class="badge">Sessions</span></div></header>
+    <div class="layout">
+      <main class="content">
+        <section id="case-study" class="section-card reveal"><h2>Case study: ordered fulfilment workflows</h2><p>Payment, allocation, and dispatch events for many orders share one queue. Different orders can run concurrently, but each order must preserve its own sequence. A Service Bus session groups messages under the order ID.</p>
+<pre class="mermaid">flowchart LR
+ S[Java workflow sender] -- SessionId = order ID --&gt; Q[order-sessions queue]
+ Q -- one locked session --&gt; W1[Processor worker]
+ Q -- another locked session --&gt; W2[Processor worker]</pre></section>
+        <section id="provision" class="section-card reveal"><h2>1. Provision a session-enabled queue</h2><p>Reuse the namespace from Lab 1. Sessions cannot be enabled after a queue is created, so session support must be enabled during creation.</p>
+          <h3>Option A: Azure portal</h3>
+          <ol>
+            <li>In the Azure portal, open the Service Bus namespace you created in Lab 1.</li>
+            <li>Under <strong>Entities</strong>, select <strong>Queues</strong>, then select <strong>+ Queue</strong>.</li>
+            <li>Set the queue name to <code>order-sessions</code>, enable <strong>Sessions</strong>, and set <strong>Max delivery count</strong> to <code>5</code>.</li>
+            <li>Confirm that sessions are enabled before you select <strong>Create</strong>. Sessions cannot be enabled after the queue is created.</li>
+            <li>Set the namespace hostname copied in Lab 1 as <code>SERVICEBUS_FQNS</code> in every terminal used by this lab.</li>
+          </ol>
+          <h3>Option B: Azure CLI</h3>
+<pre class="code" data-lang="powershell">az servicebus queue create --resource-group $resourceGroup --namespace-name $namespace --name order-sessions --enable-session true --max-delivery-count 5
+$env:SERVICEBUS_FQNS = "$namespace.servicebus.windows.net"</pre>
+          <div class="callout"><strong>Note:</strong> Complete either Option A or Option B, not both.</div>
+        </section>
+        <section id="projects" class="section-card reveal"><h2>2. Create sender and processor applications</h2>
+<pre class="code" data-lang="powershell">New-Item -ItemType Directory -Path lab3-sessions
+Set-Location lab3-sessions
+mvn archetype:generate "-DgroupId=com.contoso.workflow" "-DartifactId=workflow-sender" "-DarchetypeArtifactId=maven-archetype-quickstart" "-DinteractiveMode=false"
+mvn archetype:generate "-DgroupId=com.contoso.workflow" "-DartifactId=workflow-processor" "-DarchetypeArtifactId=maven-archetype-quickstart" "-DinteractiveMode=false"</pre>
+<p>Configure both POM files as in Lab 1 with Java 17, <code>azure-messaging-servicebus</code>, <code>azure-identity</code>, and <code>exec-maven-plugin</code>.</p></section>
+        <section id="sender" class="section-card reveal"><h2>3. Send two interleaved order workflows</h2><p>Replace <code>workflow-sender/src/main/java/com/contoso/workflow/App.java</code> with:</p>
+<pre class="code" data-lang="java">package com.contoso.workflow;
+import com.azure.identity.DefaultAzureCredentialBuilder;
+import com.azure.messaging.servicebus.*;
+
+public class App {
+  public static void main(String[] args) {
+    String fqns = System.getenv("SERVICEBUS_FQNS");
+    if (fqns == null) throw new IllegalStateException("Set SERVICEBUS_FQNS first.");
+    try (ServiceBusSenderClient sender = new ServiceBusClientBuilder()
+        .fullyQualifiedNamespace(fqns).credential(new DefaultAzureCredentialBuilder().build())
+        .sender().queueName("order-sessions").buildClient()) {
+      String[] orderIds = {"ORD-101", "ORD-202"};
+      String[] states = {"PaymentAccepted", "StockAllocated", "Dispatched"};
+      for (String state : states) for (String orderId : orderIds) {
+        sender.sendMessage(new ServiceBusMessage(state).setSessionId(orderId)
+            .setMessageId(orderId + "-" + state).setSubject(state));
+        System.out.println("Sent " + orderId + ": " + state);
+      }
+    }
+  }
+}</pre></section>
+        <section id="processor" class="section-card reveal"><h2>4. Process sessions concurrently</h2><p>Replace <code>workflow-processor/src/main/java/com/contoso/workflow/App.java</code> with:</p>
+<pre class="code" data-lang="java">package com.contoso.workflow;
+import com.azure.identity.DefaultAzureCredentialBuilder;
+import com.azure.messaging.servicebus.*;
+import java.util.Scanner;
+
+public class App {
+  public static void main(String[] args) {
+    String fqns = System.getenv("SERVICEBUS_FQNS");
+    if (fqns == null) throw new IllegalStateException("Set SERVICEBUS_FQNS first.");
+    ServiceBusProcessorClient processor = new ServiceBusClientBuilder()
+        .fullyQualifiedNamespace(fqns).credential(new DefaultAzureCredentialBuilder().build())
+        .sessionProcessor().queueName("order-sessions").disableAutoComplete()
+        .maxConcurrentSessions(2).maxConcurrentCalls(1)
+        .processMessage(context -&gt; {
+          System.out.printf("%s: %s%n", context.getMessage().getSessionId(), context.getMessage().getBody());
+          try { Thread.sleep(300); } catch (InterruptedException exception) { Thread.currentThread().interrupt(); }
+          context.complete();
+        })
+        .processError(context -&gt; System.err.println(context.getException().getMessage()))
+        .buildProcessorClient();
+    processor.start();
+    System.out.println("Session processor is running. Press Enter to stop.");
+    new Scanner(System.in).nextLine();
+    processor.close();
+  }
+}</pre></section>
+        <section id="run" class="section-card reveal"><h2>5. Run and verify ordering</h2>
+<pre class="code" data-lang="powershell"># Terminal 1
+Set-Location lab3-sessions/workflow-processor
+mvn compile exec:java "-Dexec.mainClass=com.contoso.workflow.App"
+
+# Terminal 2
+Set-Location lab3-sessions/workflow-sender
+mvn compile exec:java "-Dexec.mainClass=com.contoso.workflow.App"</pre>
+<p><strong>Expected result:</strong> Output for <code>ORD-101</code> and <code>ORD-202</code> may interleave, but each order always prints PaymentAccepted, StockAllocated, then Dispatched. The queue returns to zero active messages.</p><p><strong>Challenge:</strong> Add a third order, then compare <code>maxConcurrentSessions(1)</code> and <code>maxConcurrentSessions(3)</code> without changing per-order ordering.</p></section>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-2.html"><small>Previous</small><strong>&lt;- Lab 2</strong></a><a class="next" href="lab-4.html"><small>Next</small><strong>Lab 4 -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#projects">2. Create apps</a><a href="#sender">3. Sender</a><a href="#processor">4. Processor</a><a href="#run">5. Run and verify</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

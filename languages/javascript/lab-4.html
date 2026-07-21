@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 4: Dead-Letter Recovery - JavaScript Labs</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="javascript">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../javascript.html">JavaScript labs</a><span class="sep">/</span><span>Lab 4</span></nav>
+    <header class="hero"><h1>Lab 4 - Diagnose and recover poison messages</h1><p class="subtitle">Create an invalid order, dead-letter it with diagnostics, repair it, and re-drive it safely.</p><div class="badge-row"><span class="badge">60 minutes</span><span class="badge">Three Node.js apps</span><span class="badge">Dead-letter queue</span></div></header>
+    <div class="layout">
+      <main class="content">
+        <section id="case-study" class="section-card reveal">
+          <h2>Case study: isolate an invalid order</h2>
+          <p>A malformed order must not block valid work or disappear without evidence. The validator moves it to the queue's dead-letter subqueue with a reason and description. A recovery operator inspects that metadata, creates a corrected copy, and completes the original only after the replacement is accepted.</p>
+<pre class="mermaid">flowchart LR
+  P[Poison producer] -- invalid order --&gt; Q[orders queue]
+  Q -- validation failure --&gt; D[orders DLQ]
+  D -- inspect and repair --&gt; R[Recovery app]
+  R -- corrected copy --&gt; Q</pre>
+          <div class="callout"><strong>Important:</strong> Service Bus does not automatically clean the DLQ. Production systems should alert on dead-letter counts and retain reason, description, and correlation identifiers.</div>
+        </section>
+
+        <section id="projects" class="section-card reveal">
+          <h2>1. Verify the queue and create three applications</h2>
+          <p>Reuse the <code>orders</code> queue created through the portal or CLI in Lab 1. In the portal, open <strong>Entities &gt; Queues &gt; orders</strong> and verify that <strong>Max delivery count</strong> is <code>5</code>.</p>
+<pre class="code" data-lang="powershell">$env:SERVICEBUS_FQNS = "$namespace.servicebus.windows.net"
+
+mkdir lab4-dlq
+cd lab4-dlq
+mkdir poison-producer, order-validator, dlq-recovery
+
+foreach ($app in @("poison-producer", "order-validator", "dlq-recovery")) {
+  Push-Location $app
+  npm init -y
+  npm pkg set type=module
+  npm install @azure/service-bus @azure/identity
+  Pop-Location
+}</pre>
+        </section>
+
+        <section id="poison" class="section-card reveal">
+          <h2>2. Send an invalid order</h2>
+          <p>Create <code>poison-producer/index.js</code>:</p>
+<pre class="code" data-lang="javascript">import { ServiceBusClient } from "@azure/service-bus";
+import { DefaultAzureCredential } from "@azure/identity";
+
+const fqns = process.env.SERVICEBUS_FQNS;
+if (!fqns) throw new Error("Set SERVICEBUS_FQNS first.");
+
+const client = new ServiceBusClient(fqns, new DefaultAzureCredential());
+const sender = client.createSender("orders");
+
+try {
+  await sender.sendMessages({
+    body: "not-json",
+    messageId: `POISON-${Date.now()}`,
+    subject: "OrderCreated"
+  });
+  console.log("Sent one invalid order.");
+} finally {
+  await sender.close();
+  await client.close();
+}</pre>
+        </section>
+
+        <section id="validator" class="section-card reveal">
+          <h2>3. Validate and dead-letter</h2>
+          <p>Create <code>order-validator/index.js</code>:</p>
+<pre class="code" data-lang="javascript">import { ServiceBusClient } from "@azure/service-bus";
+import { DefaultAzureCredential } from "@azure/identity";
+
+const fqns = process.env.SERVICEBUS_FQNS;
+if (!fqns) throw new Error("Set SERVICEBUS_FQNS first.");
+
+const client = new ServiceBusClient(fqns, new DefaultAzureCredential());
+const receiver = client.createReceiver("orders", { receiveMode: "peekLock" });
+
+try {
+  const [message] = await receiver.receiveMessages(1, { maxWaitTimeInMs: 20000 });
+  if (!message) throw new Error("No order was available.");
+
+  if (typeof message.body !== "object" || message.body === null || !message.body.orderId) {
+    await receiver.deadLetterMessage(message, {
+      deadLetterReason: "InvalidOrderJson",
+      deadLetterErrorDescription: "The body must be a JSON object with an orderId."
+    });
+    console.log(`Dead-lettered ${message.messageId}: InvalidOrderJson`);
+  } else {
+    await receiver.completeMessage(message);
+    console.log(`Validated and completed ${message.body.orderId}.`);
+  }
+} finally {
+  await receiver.close();
+  await client.close();
+}</pre>
+        </section>
+
+        <section id="recover" class="section-card reveal">
+          <h2>4. Inspect, repair, and re-drive</h2>
+          <p>Create <code>dlq-recovery/index.js</code>:</p>
+<pre class="code" data-lang="javascript">import { ServiceBusClient } from "@azure/service-bus";
+import { DefaultAzureCredential } from "@azure/identity";
+
+const fqns = process.env.SERVICEBUS_FQNS;
+if (!fqns) throw new Error("Set SERVICEBUS_FQNS first.");
+
+const client = new ServiceBusClient(fqns, new DefaultAzureCredential());
+const dlq = client.createReceiver("orders", {
+  subQueueType: "deadLetter",
+  receiveMode: "peekLock"
+});
+const sender = client.createSender("orders");
+
+try {
+  const [failed] = await dlq.receiveMessages(1, { maxWaitTimeInMs: 20000 });
+  if (!failed) throw new Error("The DLQ is empty.");
+
+  console.log(`Reason: ${failed.deadLetterReason}`);
+  console.log(`Description: ${failed.deadLetterErrorDescription}`);
+  const repaired = {
+    body: { orderId: "ORD-RECOVERED", product: "AZ-BOOK", quantity: 1 },
+    messageId: `${failed.messageId}-repaired`,
+    correlationId: String(failed.messageId),
+    subject: failed.subject,
+    contentType: "application/json"
+  };
+
+  await sender.sendMessages(repaired);
+  await dlq.completeMessage(failed);
+  console.log(`Re-drove ${repaired.messageId} and completed the DLQ original.`);
+} finally {
+  await sender.close();
+  await dlq.close();
+  await client.close();
+}</pre>
+          <div class="callout"><strong>Recovery rule:</strong> Complete the original only after the repaired copy is accepted. Preserve correlation and use idempotent storage writes.</div>
+        </section>
+
+        <section id="run" class="section-card reveal">
+          <h2>5. Run the recovery drill</h2>
+<pre class="code" data-lang="powershell">node .\poison-producer\index.js
+node .\order-validator\index.js
+# Verify the portal shows one dead-lettered message.
+node .\dlq-recovery\index.js
+# Run the validator again to consume the repaired copy.
+node .\order-validator\index.js</pre>
+          <p><strong>Expected result:</strong> The DLQ count rises to one after validation, then returns to zero after recovery. The final validator run completes <code>ORD-RECOVERED</code>, and the active queue count returns to zero.</p>
+          <p><strong>Challenge:</strong> Change the recovery policy so unknown dead-letter reasons are abandoned for investigation rather than automatically re-driven.</p>
+        </section>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-3.html"><small>Previous</small><strong>&lt;- Lab 3</strong></a><a class="next" href="lab-5.html"><small>Next</small><strong>Lab 5 -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#projects">1. Create apps</a><a href="#poison">2. Send invalid order</a><a href="#validator">3. Dead-letter</a><a href="#recover">4. Recover</a><a href="#run">5. Run and verify</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

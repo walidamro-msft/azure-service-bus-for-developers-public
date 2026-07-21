@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 5: Serverless Integration - Python Labs</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="python">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../python.html">Python labs</a><span class="sep">/</span><span>Lab 5</span></nav>
+    <header class="hero"><h1>Lab 5 - Scale orders from HTTP to storage</h1><p class="subtitle">Build and test a complete serverless path through Python Functions, Service Bus, Event Grid, Logic Apps, and Table Storage.</p><div class="badge-row"><span class="badge">90 minutes</span><span class="badge">Azure Functions</span><span class="badge">Serverless integration</span></div></header>
+    <div class="layout">
+      <main class="content">
+        <section id="case-study" class="section-card reveal">
+          <h2>Case study: absorb a checkout surge</h2>
+          <p><strong>Flow:</strong> Azure Load Testing calls an HTTP-triggered Python Function. The Function sends an order to <code>orders</code>. When no receiver is active, Service Bus emits an Event Grid notification. A Logic App handles that notification, drains available messages with peek-lock, writes rows to Azure Table Storage, and completes each message.</p>
+<pre class="mermaid">flowchart LR
+  ALT[Azure Load Testing] -- HTTP POST --&gt; FN[Python Function producer]
+  FN -- managed identity --&gt; SB[Service Bus orders queue]
+  SB -- queue has messages event --&gt; EG[Event Grid]
+  EG -- trigger --&gt; LA[Logic App consumer]
+  LA -- receive and complete --&gt; SB
+  LA -- upsert order --&gt; TS[Table Storage]</pre>
+          <p><strong>Outcome:</strong> Load-test an HTTP endpoint, buffer accepted orders, wake a serverless consumer, and verify that every unique order becomes a table row.</p>
+
+          <h3 id="provision">1. Provision the supporting resources</h3>
+          <p>Reuse <code>rg-sb-workshop</code>, the Service Bus namespace, and the <code>orders</code> queue from Lab 1. Do not create another namespace or queue. If <code>orders</code> is missing, return to Lab 1 and create it before continuing. Python Functions run on Linux. The commands use a Flex Consumption plan and a system-assigned managed identity.</p>
+          <h4>Option A: Azure portal</h4>
+          <ol>
+            <li>In the Azure portal, create a <strong>Storage account</strong> in <code>rg-sb-workshop</code>. Choose a unique name, the same region as the workshop namespace, <strong>Standard</strong> performance, and <strong>Locally-redundant storage (LRS)</strong>.</li>
+            <li>Open the storage account, select <strong>Access control (IAM) &gt; Add role assignment</strong>, and assign your user account <strong>Storage Table Data Contributor</strong>. Then select <strong>Storage browser &gt; Tables &gt; Add table</strong> and create a table named <code>Orders</code>.</li>
+            <li>Create a <strong>Function App</strong> in <code>rg-sb-workshop</code>. Select <strong>Flex Consumption</strong>, the same region, <strong>Python 3.11</strong> on Linux, and the storage account you just created. Enter a globally unique app name such as <code>func-sb-&lt;unique&gt;</code>.</li>
+            <li>Open the Function App, select <strong>Settings &gt; Identity</strong>, turn the system-assigned identity <strong>On</strong>, and save.</li>
+            <li>Open the Lab 1 Service Bus namespace and copy its <strong>Host name</strong> from the <strong>Overview</strong> page, for example <code>sb-contoso-12345.servicebus.windows.net</code>. Do not include <code>https://</code>, a trailing slash, or <code>/orders</code>.</li>
+            <li>Return to the Function App. Under <strong>Settings &gt; Environment variables</strong>, add <code>SERVICEBUS_FQNS</code> and paste that Host name as its value, then apply the change.</li>
+            <li>Open the Service Bus namespace and select <strong>Access control (IAM) &gt; Add role assignment</strong>. Assign <strong>Azure Service Bus Data Sender</strong> to the Function App's managed identity.</li>
+          </ol>
+          <h4>Option B: Azure CLI</h4>
+<pre class="code" data-lang="powershell">$resourceGroup = "rg-sb-workshop"
+$namespace = "&lt;Lab-1-namespace-name&gt;"
+$location = "eastus"
+$storage = "stsb$((Get-Random -Maximum 999999).ToString('000000'))"
+$functionApp = "func-sb-$((Get-Random -Maximum 99999).ToString('00000'))"
+$logicApp = "logic-sb-orders"
+
+az storage account create --resource-group $resourceGroup --name $storage --location $location --sku Standard_LRS --allow-blob-public-access false
+$storageId = az storage account show --resource-group $resourceGroup --name $storage --query id -o tsv
+$userId = az ad signed-in-user show --query id -o tsv
+az role assignment create --assignee $userId --role "Storage Table Data Contributor" --scope $storageId
+az storage table create --account-name $storage --name Orders --auth-mode login
+
+az functionapp create --resource-group $resourceGroup --name $functionApp --storage-account $storage --flexconsumption-location $location --runtime python --runtime-version 3.11 --functions-version 4
+az functionapp identity assign --resource-group $resourceGroup --name $functionApp
+$functionPrincipal = az functionapp identity show --resource-group $resourceGroup --name $functionApp --query principalId -o tsv
+$namespaceId = az servicebus namespace show --resource-group $resourceGroup --name $namespace --query id -o tsv
+az role assignment create --assignee $functionPrincipal --role "Azure Service Bus Data Sender" --scope $namespaceId
+az functionapp config appsettings set --resource-group $resourceGroup --name $functionApp --settings SERVICEBUS_FQNS="$namespace.servicebus.windows.net"</pre>
+          <div class="callout"><strong>Passwordless access:</strong> The Function uses its managed identity to send. The Logic App will use its own managed identity for Service Bus and Table Storage. Do not add namespace or storage account keys to application settings.</div>
+
+          <h3 id="function-producer">2. Create, test, and deploy the Function producer</h3>
+<pre class="code" data-lang="powershell">mkdir lab5-function
+cd lab5-function
+py -3.10 -m venv .venv
+Set-ExecutionPolicy -Scope Process Bypass
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install azure-functions azure-servicebus azure-identity
+func init ContosoOrderApi --python --model V2
+cd ContosoOrderApi
+New-Item function_app.py -ItemType File -Force</pre>
+          <p>Set <code>requirements.txt</code> to:</p>
+<pre class="code" data-lang="text">azure-functions
+azure-identity
+azure-servicebus</pre>
+          <p>Set <code>host.json</code> to:</p>
+<pre class="code" data-lang="json">{
+  "version": "2.0",
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle",
+    "version": "[4.*, 5.0.0)"
+  }
+}</pre>
+          <p>Replace <code>function_app.py</code> with the Python v2 programming model Function:</p>
+<pre class="code" data-lang="python">import json
+import os
+
+import azure.functions as func
+from azure.identity import DefaultAzureCredential
+from azure.servicebus import ServiceBusClient, ServiceBusMessage
+
+app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+credential = DefaultAzureCredential()
+service_bus_client = ServiceBusClient(os.environ["SERVICEBUS_FQNS"], credential)
+
+@app.route(route="orders", methods=["POST"])
+def submit_order(request: func.HttpRequest) -&gt; func.HttpResponse:
+    try:
+        order = request.get_json()
+        order_id = order["orderId"]
+    except (ValueError, KeyError):
+        return func.HttpResponse(
+            json.dumps({"error": "A JSON orderId is required."}),
+            mimetype="application/json",
+            status_code=400,
+        )
+
+    with service_bus_client.get_queue_sender(queue_name="orders") as sender:
+        sender.send_messages(ServiceBusMessage(
+            json.dumps(order),
+            message_id=order_id,
+            subject="OrderCreated",
+            content_type="application/json",
+        ))
+
+    return func.HttpResponse(
+        json.dumps({"orderId": order_id}),
+        mimetype="application/json",
+        status_code=202,
+    )</pre>
+          <p>Create <code>local.settings.json</code> for local testing. Keep it out of source control.</p>
+<pre class="code" data-lang="json">{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "SERVICEBUS_FQNS": "&lt;namespace&gt;.servicebus.windows.net"
+  }
+}</pre>
+<pre class="code" data-lang="powershell"># Terminal 1: run locally with Azurite available
+az login
+func start
+
+# Terminal 2: verify local acceptance
+Invoke-RestMethod -Method Post -Uri "http://localhost:7071/api/orders" -ContentType "application/json" -Body '{"orderId":"LOCAL-001","amount":125}'
+
+# Deploy after the local request returns LOCAL-001
+func azure functionapp publish $functionApp --python</pre>
+
+          <h3 id="cloud-flow">3. Configure Event Grid, Logic Apps, and Table Storage</h3>
+          <ol>
+            <li>Create a <strong>Consumption Logic App</strong> named <code>logic-sb-orders</code> in <code>rg-sb-workshop</code>. Enable its system-assigned identity.</li>
+            <li>Grant that identity <strong>Azure Service Bus Data Receiver</strong> on the namespace and <strong>Storage Table Data Contributor</strong> on the storage account.</li>
+            <li>Start the workflow with <strong>When a resource event occurs</strong>. Select the subscription and resource group, set resource type to <strong>Microsoft.ServiceBus.Namespaces</strong>, select the workshop namespace, and choose event type <code>Microsoft.ServiceBus.ActiveMessagesAvailableWithNoListeners</code>.</li>
+            <li>Add a condition that continues only when the Event Grid subject ends with <code>/queues/orders</code>. This prevents another queue's notification from starting this drain path.</li>
+            <li>Add an <strong>Until</strong> loop controlled by a Boolean variable named <code>queueEmpty</code>, initially <code>false</code>. Set a finite timeout and iteration limit, such as five minutes and 500 iterations.</li>
+            <li>Inside the loop, use the Service Bus managed-identity connection to <strong>Get messages from a queue (peek-lock)</strong> from <code>orders</code>, one message at a time.</li>
+            <li>If no message is returned, set <code>queueEmpty</code> to <code>true</code>. Otherwise parse the JSON body, then use the Table Storage managed-identity connection to insert or replace an entity in <code>Orders</code>. Set <code>PartitionKey</code> to <code>orders</code>, <code>RowKey</code> to <code>orderId</code>, and store the message ID, amount, and received UTC time.</li>
+            <li>Only after the table upsert succeeds, use the message lock token with <strong>Complete the message in a queue</strong>. Configure failures to abandon or dead-letter rather than completing unpersisted work.</li>
+          </ol>
+<pre class="code" data-lang="powershell">$logicPrincipal = az resource show --resource-group $resourceGroup --resource-type Microsoft.Logic/workflows --name $logicApp --query identity.principalId -o tsv
+az role assignment create --assignee $logicPrincipal --role "Azure Service Bus Data Receiver" --scope $namespaceId
+az role assignment create --assignee $logicPrincipal --role "Storage Table Data Contributor" --scope $storageId</pre>
+          <div class="callout"><strong>Important:</strong> Event Grid is a wake-up signal. It does not emit one event per Service Bus message and does not carry the message body. Stop all interactive receivers before testing, and make the Logic App drain until receive returns no message.</div>
+
+          <h3 id="load-test">4. Run the load test</h3>
+          <p>Create <code>locustfile.py</code> beside the Function project. Each request uses a unique order ID so Table Storage row counts remain meaningful.</p>
+<pre class="code" data-lang="python">import os
+import uuid
+
+from locust import HttpUser, between, task
+
+class CheckoutUser(HttpUser):
+    wait_time = between(0.1, 0.5)
+
+    @task
+    def submit_order(self):
+        order_id = str(uuid.uuid4())
+        self.client.post(
+            "/api/orders",
+            params={"code": os.environ["FUNCTION_KEY"]},
+            json={"orderId": order_id, "amount": 125},
+            name="POST /api/orders",
+        )</pre>
+          <p>Get the deployed endpoint and function key, then run a 20-user, 60-second smoke load locally. You can upload the same Locust script to Azure Load Testing and configure 20 users, a spawn rate of 5, and a 60-second duration.</p>
+<pre class="code" data-lang="powershell">python -m pip install locust
+$functionKey = az functionapp function keys list --resource-group $resourceGroup --name $functionApp --function-name submit_order --query default -o tsv
+$env:FUNCTION_KEY = $functionKey
+$functionHost = "https://$functionApp.azurewebsites.net"
+locust --headless --users 20 --spawn-rate 5 --run-time 60s --host $functionHost
+
+# In Azure Load Testing, create a Locust test with locustfile.py and set FUNCTION_KEY as a secret environment variable.
+# Set host to the value of $functionHost, users to 20, spawn rate to 5, and duration to 60 seconds.</pre>
+
+          <h3 id="observe">5. Verify the complete path</h3>
+          <p>Compare successful Function requests, the queue's active-message count, Event Grid delivery metrics, Logic App run history, dead-letter count, and unique Table Storage row count. Increase users until the queue grows, then watch it drain after the load stops.</p>
+<pre class="code" data-lang="powershell">az servicebus queue show --resource-group $resourceGroup --namespace-name $namespace --name orders --query countDetails
+az storage entity query --account-name $storage --table-name Orders --auth-mode login --query "length(items)" -o tsv</pre>
+          <p><strong>Expected result:</strong> HTTP calls return <code>202</code>, Event Grid starts the Logic App, the queue returns to zero active messages with no dead letters, and the <code>Orders</code> table contains one row per unique accepted order ID.</p>
+          <p><strong>Production extension:</strong> Use Premium Service Bus when you need isolated capacity and predictable latency; use private endpoints, zone redundancy where available, Application Insights, DLQ alerts, and idempotent storage writes.</p>
+        </section>
+        <section id="references" class="section-card reveal">
+          <h2>References and cleanup</h2>
+          <p>Samples follow the current <a href="https://learn.microsoft.com/python/api/overview/azure/servicebus">Azure Service Bus SDK for Python</a>, <a href="https://learn.microsoft.com/azure/azure-functions/functions-reference-python">Python Functions guide</a>, and <a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-to-event-grid-integration-example">Service Bus to Event Grid integration</a>. Check PyPI for current stable package versions when you begin the lab.</p>
+          <p>After you finish all observations, remove the workshop resource group:</p>
+<pre class="code" data-lang="powershell">az group delete --name rg-sb-workshop --yes --no-wait</pre>
+        </section>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-4.html"><small>Previous</small><strong>&lt;- Lab 4</strong></a><a class="next" href="../../index.html"><small>Next</small><strong>Workshop home -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#function-producer">2. Function producer</a><a href="#cloud-flow">3. Cloud consumer</a><a href="#load-test">4. Load test</a><a href="#observe">5. Verify</a><a href="#references">Cleanup</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Topics and Subscriptions - Python - Azure Service Bus Workshop</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" /><link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="topic-python"><div class="page">
+  <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../../topics-subscriptions.html">Topics and Subscriptions</a><span class="sep">/</span><span>Python</span></nav>
+  <header class="hero"><h1>Topics and subscriptions in Python</h1><p class="subtitle">Publish events, receive independent subscription copies, and manage SQL and correlation rules with azure-servicebus.</p><div class="badge-row"><span class="badge">Python 3.10+</span><span class="badge">azure-servicebus</span><span class="badge">Sync and async clients</span></div></header>
+  <div class="layout"><main class="content">
+    <section id="setup" class="section-card reveal"><h2>Package, identity, and topology</h2><p>Install <code>azure-servicebus</code> and <code>azure-identity</code>. Reuse the namespace client and entity clients. Grant publisher and subscriber identities only the data-plane role each requires.</p>
+<pre class="code" data-lang="powershell">python -m pip install azure-servicebus azure-identity</pre>
+<pre class="code" data-lang="python">import os
+from azure.identity import DefaultAzureCredential
+from azure.servicebus import ServiceBusClient, ServiceBusMessage
+
+fully_qualified_namespace = os.environ["SERVICEBUS_FQNS"]
+credential = DefaultAzureCredential()
+client = ServiceBusClient(fully_qualified_namespace, credential)</pre>
+      <div class="callout"><strong>Fan-out boundary:</strong> every matching subscription stores its own durable copy. Receivers on one subscription compete; receivers on different subscriptions do not.</div></section>
+
+    <section id="publish" class="section-card reveal"><h2>Publish to a topic</h2><p>Use <code>get_topic_sender</code>. Put routing values in <code>application_properties</code> because subscription rules cannot inspect JSON fields in the body.</p>
+<pre class="code" data-lang="python">import json
+
+body = json.dumps({"orderId": "ORD-123", "total": 149.50})
+message = ServiceBusMessage(
+    body,
+    message_id="order-created:ORD-123",
+    correlation_id="order:ORD-123",
+    subject="OrderCreated.v1",
+    content_type="application/json",
+    application_properties={"region": "us", "priority": 3},
+)
+
+with client:
+    with client.get_topic_sender(topic_name="order-events") as sender:
+        sender.send_messages(message)</pre><p>Reuse <code>message_id</code> for retries of the same logical publish. Each subscription retains that ID and can apply its own idempotency policy.</p></section>
+
+    <section id="subscribe" class="section-card reveal"><h2>Process one subscription</h2><p>Create a receiver with both names. Use a separate long-running receiver loop for every independently deployed subscriber capability.</p>
+<pre class="code" data-lang="python">with ServiceBusClient(fully_qualified_namespace, credential) as client:
+    with client.get_subscription_receiver(
+        topic_name="order-events",
+        subscription_name="inventory",
+        max_wait_time=20,
+        max_lock_renewal_duration=300,
+    ) as receiver:
+        for message in receiver:
+            try:
+                reserve_inventory(str(message))
+                receiver.complete_message(message)
+            except InvalidOrderError as error:
+                receiver.dead_letter_message(
+                    message,
+                    reason="InvalidOrder",
+                    error_description=str(error),
+                )
+            except Exception:
+                receiver.abandon_message(message)</pre><p>For higher throughput, receive batches and bound application-managed concurrency. Settlement changes only the selected subscription copy.</p></section>
+
+    <section id="filters" class="section-card reveal"><h2>Manage subscription rules</h2><p>Use the management client for topology and rule changes. Remove <code>$Default</code> when the subscription should not receive every event.</p>
+<pre class="code" data-lang="python">from azure.servicebus.management import ServiceBusAdministrationClient
+from azure.servicebus.management import CorrelationRuleFilter, SqlRuleFilter
+
+admin = ServiceBusAdministrationClient(fully_qualified_namespace, credential)
+admin.delete_rule("order-events", "inventory", "$Default")
+admin.create_rule(
+    "order-events",
+    "inventory",
+    "UsOrders",
+    filter=SqlRuleFilter("region = 'us' AND priority &gt;= 2"),
+)
+admin.create_rule(
+    "order-events",
+    "billing",
+    "OrderCreated",
+    filter=CorrelationRuleFilter(subject="OrderCreated.v1"),
+)</pre>
+      <p>Use SQL filters for expressions and correlation filters for exact values. Treat property names, casing, and Python scalar types as part of the publisher contract.</p></section>
+
+    <section id="operations" class="section-card reveal"><h2>Operational design</h2><ul><li>Monitor active, dead-letter, and oldest-message age for every subscription.</li><li>Scale subscriber processes independently according to downstream capacity.</li><li>Keep clients and receivers open for the consuming workflow, then close them gracefully.</li><li>Use <code>sub_queue=ServiceBusSubQueue.DEAD_LETTER</code> for a dedicated recovery receiver.</li><li>For async applications, use the equivalent clients from <code>azure.servicebus.aio</code>.</li></ul><p><strong>References:</strong> <a href="https://learn.microsoft.com/python/api/azure-servicebus/azure.servicebus.servicebusclient">ServiceBusClient</a>, <a href="https://learn.microsoft.com/python/api/azure-servicebus/azure.servicebus.management.servicebusadministrationclient">administration client</a>, and <a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-python-how-to-use-topics-subscriptions">Python topics and subscriptions</a>.</p></section>
+
+    <nav class="pager" aria-label="Reference pagination"><a class="prev" href="../javascript/topic-processing.html"><small>Previous</small><strong>&lt;- JavaScript / TypeScript</strong></a><a class="next" href="../../advanced-features.html"><small>Next</small><strong>Advanced Features -&gt;</strong></a></nav>
+  </main><aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#setup">Package and topology</a><a href="#publish">Publish to a topic</a><a href="#subscribe">Process a subscription</a><a href="#filters">Subscription rules</a><a href="#operations">Operational design</a></aside></div>
+</div><script type="module" src="../../assets/site.js"></script></body></html>

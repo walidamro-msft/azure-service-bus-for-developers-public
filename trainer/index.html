@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trainer Hub | Azure Service Bus Developer Workshop</title>
+  <meta name="description" content="Trainer notes, copy-ready attendee invitation, delivery flow, and shortcuts for the Azure Service Bus Developer Workshop." />
+  <script>
+    (function () {
+      var t = localStorage.getItem("sb-runtime-theme");
+      if (t === "light" || t === "dark") {
+        document.documentElement.setAttribute("data-theme", t);
+      } else {
+        document.documentElement.setAttribute("data-theme", window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      }
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../assets/site.css" />
+  <link rel="stylesheet" href="trainer.css" />
+</head>
+<body data-root=".." data-active="trainer">
+  <main class="page trainer-page">
+    <section class="trainer-hero reveal">
+      <div class="trainer-hero-copy">
+        <span class="eyebrow"><span class="nav-dot dot-orange"></span> Facilitator workspace</span>
+        <h1>Azure Service Bus <span>Trainer Hub</span></h1>
+        <p>Everything needed to prepare the room, invite attendees, deliver the modules, facilitate the labs, and close the workshop cleanly.</p>
+        <div class="audience" aria-label="Trainer hub contents">
+          <span>Copy-ready invite</span>
+          <span>Two-day delivery plan</span>
+          <span>Module cues</span>
+          <span>Lab checkpoints</span>
+        </div>
+      </div>
+      <img src="../images/azure/10836-icon-service-Azure-Service-Bus.svg" alt="" width="156" height="156" />
+    </section>
+
+    <section class="trainer-section" id="invite">
+      <div class="section-head">
+        <span class="kicker">Ready to send</span>
+        <h2>Attendee Invite Body (Copy/Paste)</h2>
+          <p>Copy this workshop description directly into an invitation or registration page.</p>
+        </div>
+        <pre class="code invite-copy">Azure Service Bus Developer Workshop
+
+    You are invited to a hands-on Azure Service Bus workshop focused on designing, building, securing, and operating reliable asynchronous messaging solutions.
+
+    What we will cover:
+    - Azure Service Bus fundamentals: namespaces, queues, topics, subscriptions, messages, and settlement
+    - Messaging architecture decisions across Service Bus, Event Grid, Event Hubs, Queue Storage, and synchronous APIs
+    - Service Bus tiers, partitioning, Premium messaging units, availability, and cost considerations
+    - Creating and managing namespaces, queues, topics, and subscriptions with the Azure portal, Azure CLI, and Bicep
+    - Queue processing, publish/subscribe, filters, retries, idempotency, and dead-letter handling
+    - Advanced messaging patterns with sessions, duplicate detection, scheduling, deferral, and message expiration
+    - Passwordless application development using .NET, Java, JavaScript/TypeScript, or Python
+    - Security and governance with managed identities, RBAC, private networking, and policy controls
+    - Monitoring and troubleshooting with metrics, logs, alerts, backlog analysis, and operational runbooks
+
+    Who should attend:
+    - Cloud architects, integration developers, application developers, platform engineers, and DevOps engineers
+
+    Prerequisites:
+    - Basic Azure knowledge
+    - Familiarity with APIs, events, or asynchronous application concepts
+    - Azure subscription access for hands-on labs (recommended)
+    - Visual Studio Code, Azure CLI, Git, and one supported language runtime for the selected lab track
+
+    Outcome:
+    By the end of this workshop, attendees will be able to choose an appropriate Azure messaging architecture, design Service Bus entities and message contracts, build passwordless producers and consumers, apply reliable processing patterns, and operate secure and observable messaging workloads.</pre>
+    </section>
+
+    <section class="trainer-section" id="delivery-flow">
+      <div class="section-head">
+        <span class="kicker">Run of show</span>
+        <h2>Recommended Delivery Flow</h2>
+        <p>The complete path is designed for two instructor-led days. Keep a prepared namespace and completed applications available as a fallback.</p>
+      </div>
+      <div class="delivery-grid">
+        <article class="delivery-item reveal" style="--flow:#0078d4">
+          <span class="delivery-label">Before the event</span>
+          <h3>Prepare access and one language</h3>
+          <p>Confirm the subscription model, test the selected SDK path from a clean environment, publish the site, and communicate the naming convention.</p>
+          <a href="TRAINER-NOTES.md#preparation">Open preparation checklist</a>
+        </article>
+        <article class="delivery-item reveal" style="--flow:#107c10">
+          <span class="delivery-label">Day 1</span>
+          <h3>Architecture to pub/sub</h3>
+          <p>Build the mental model, choose the tier, deploy the topology, then complete queue intake and topic fan-out.</p>
+          <a href="../introduction.html">Start module 1</a>
+        </article>
+        <article class="delivery-item reveal" style="--flow:#ff8c00">
+          <span class="delivery-label">Day 2</span>
+          <h3>Reliability to operations</h3>
+          <p>Work through sessions and DLQ recovery before security, monitoring, capacity diagnosis, and operational runbooks.</p>
+          <a href="../advanced-features.html">Start advanced features</a>
+        </article>
+        <article class="delivery-item reveal" style="--flow:#d83b01">
+          <span class="delivery-label">Close</span>
+          <h3>Prove outcomes and clean up</h3>
+          <p>Ask attendees to defend their topology, ordering key, idempotency plan, and DLQ owner, then verify resource-group deletion.</p>
+          <a href="TRAINER-NOTES.md#cleanup">Open cleanup checklist</a>
+        </article>
+      </div>
+    </section>
+
+    <section class="trainer-section" id="shortcuts">
+      <div class="section-head">
+        <span class="kicker">During delivery</span>
+        <h2>Trainer Shortcuts</h2>
+        <p>Open the reference you need without leaving the delivery flow.</p>
+      </div>
+      <div class="shortcut-grid">
+        <a class="trainer-shortcut reveal" href="TRAINER-NOTES.md#module-delivery-notes" style="--shortcut:#0078d4">
+          <span>01</span><h3>Module cues</h3><p>Emphasis, demonstration, checkpoint, and timing for every module.</p>
+        </a>
+        <a class="trainer-shortcut reveal" href="TRAINER-NOTES.md#lab-facilitation" style="--shortcut:#107c10">
+          <span>02</span><h3>Lab checkpoints</h3><p>Success criteria, pause points, and time boxes for all five labs.</p>
+        </a>
+        <a class="trainer-shortcut reveal" href="TRAINER-NOTES.md#common-failures" style="--shortcut:#d83b01">
+          <span>03</span><h3>Troubleshooting</h3><p>Fast diagnosis for RBAC, sessions, filters, locks, backlog, and capacity.</p>
+        </a>
+        <a class="trainer-shortcut reveal" href="../index.html#modules" style="--shortcut:#8e44ad">
+          <span>04</span><h3>Module index</h3><p>Jump to any attendee-facing module in the shared learning path.</p>
+        </a>
+        <a class="trainer-shortcut reveal" href="../index.html#languages" style="--shortcut:#ff8c00">
+          <span>05</span><h3>Language tracks</h3><p>Open the .NET, Java, JavaScript/TypeScript, or Python lab lane.</p>
+        </a>
+        <a class="trainer-shortcut reveal" href="INVITATION.md" style="--shortcut:#0b8d80">
+          <span>06</span><h3>Invitation source</h3><p>Edit or reuse the full Markdown invitation, including the one-day option.</p>
+        </a>
+      </div>
+    </section>
+
+    <section class="guidance-band reveal" id="guidance">
+      <div>
+        <span class="kicker">Content boundary</span>
+        <h2>How Delivery Guidance Was Integrated</h2>
+      </div>
+      <ul>
+        <li><strong>Attendee pages stay attendee-facing.</strong> Trainer cues, room management, fallback paths, and timing remain in this hub and the trainer notes.</li>
+        <li><strong>Every module has an observable checkpoint.</strong> The notes pair concepts with a demonstration and a question that tests whether the decision is understood.</li>
+        <li><strong>Labs use shared outcomes across languages.</strong> Commands differ, but checkpoints stay aligned for .NET, Java, JavaScript/TypeScript, and Python.</li>
+        <li><strong>Operations are part of the learning path.</strong> Identity, monitoring, DLQ ownership, incident diagnosis, and cleanup are not treated as optional polish.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module" src="../assets/site.js"></script>
+</body>
+</html>

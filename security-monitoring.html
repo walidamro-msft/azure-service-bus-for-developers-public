@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Module 9: Security and Monitoring</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("sb-runtime-theme");
+      document.documentElement.setAttribute("data-theme", (t === "light" || t === "dark") ? t : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="assets/site.css" />
+</head>
+<body data-root="." data-active="module-8">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><span>Security and Monitoring</span></nav>
+    <header class="hero">
+      <h1>Security and Monitoring</h1>
+      <p class="subtitle">Harden access and make operations observable with managed identity, RBAC, diagnostics, and actionable alerting.</p>
+      <div class="badge-row"><span class="badge">Hands-on</span><span class="badge">~45 min</span><span class="badge">Module 9 of 11</span></div>
+    </header>
+
+    <div class="layout">
+      <main class="content">
+        <section id="identity-rbac" class="section-card reveal">
+          <h2>Identity and RBAC</h2>
+          <ul>
+            <li>Use DefaultAzureCredential with managed identity for hosted workloads.</li>
+            <li>Assign least-privilege roles: Data Sender, Data Receiver, or Data Owner only when required.</li>
+            <li>Avoid shared keys for production app paths.</li>
+          </ul>
+        </section>
+
+        <section id="networking" class="section-card reveal">
+          <h2>Network security</h2>
+          <p>Limit public access, prefer private endpoints, and use firewall/network rules to constrain ingress patterns.</p>
+        </section>
+
+        <section id="diagnostics" class="section-card reveal">
+          <h2>Diagnostics and metrics</h2>
+          <div class="table-wrap">
+            <table aria-label="Diagnostics guidance">
+              <thead><tr><th>Signal</th><th>Why it matters</th></tr></thead>
+              <tbody>
+                <tr><td>ActiveMessages / DeadletteredMessages</td><td>Backlog growth and poison message accumulation</td></tr>
+                <tr><td>IncomingRequests / ThrottledRequests</td><td>Capacity pressure and throughput issues</td></tr>
+                <tr><td>ServerErrors / UserErrors</td><td>Availability and client correctness problems</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="alerts" class="section-card reveal">
+          <h2>Alert strategy</h2>
+          <ol>
+            <li>Alert on sustained DLQ growth over threshold.</li>
+            <li>Alert on throttles and server errors.</li>
+            <li>Alert on unusual backlog age and processing latency.</li>
+          </ol>
+        </section>
+
+        <nav class="pager" aria-label="Workshop pagination">
+          <a class="prev" href="advanced-features.html"><small>Previous</small><strong><- Advanced Features</strong></a>
+          <a class="next" href="administration.html"><small>Next</small><strong>Administration and Operations -></strong></a>
+        </nav>
+      </main>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>On This Page</h3>
+        <a href="#identity-rbac">Identity and RBAC</a>
+        <a href="#networking">Network security</a>
+        <a href="#diagnostics">Diagnostics and metrics</a>
+        <a href="#alerts">Alert strategy</a>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

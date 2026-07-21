@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Azure Service Bus Developer Workshop</title>
+  <meta name="description" content="Presentation-ready Azure Service Bus workshop for developers with guided modules, diagrams, deployment paths, and production practices." />
+  <script>
+    (function () {
+      var t = localStorage.getItem("sb-runtime-theme");
+      if (t === "light" || t === "dark") {
+        document.documentElement.setAttribute("data-theme", t);
+      } else {
+        document.documentElement.setAttribute("data-theme", window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      }
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="assets/site.css" />
+</head>
+<body data-root="." data-active="home">
+  <div class="page">
+    <section class="landing-hero reveal">
+      <span class="eyebrow"><span class="nav-dot dot-blue"></span> Hands-on cloud training</span>
+      <h1>Build resilient messaging with <span class="grad">Azure Service Bus</span></h1>
+      <p class="lead">
+        A complete developer workshop that takes your team from foundational messaging concepts to production-grade implementation.
+        Follow the same modern workshop experience and visual language used in the Functions training, now focused fully on Service Bus.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="introduction.html">Start module 1</a>
+        <a class="btn btn-ghost" href="#modules">View modules</a>
+        <a class="btn btn-ghost" href="#languages">Choose language path</a>
+        <a class="btn btn-ghost" href="queues.html">Jump to coding labs</a>
+        <a class="btn btn-ghost" href="trainer/index.html">Trainer Hub</a>
+      </div>
+      <div class="hero-stats">
+        <div class="stat"><strong>11</strong><span>Workshop modules</span></div>
+        <div class="stat"><strong>20</strong><span>Language labs</span></div>
+        <div class="stat"><strong>4</strong><span>Fully supported SDK paths</span></div>
+      </div>
+    </section>
+
+    <div class="section-head">
+      <span class="kicker">Suggested flow</span>
+      <h2>How to run this workshop</h2>
+      <p>Start with architecture and tier decisions, then deploy, code against queues/topics, and finish with reliability, security, and observability.</p>
+    </div>
+
+    <div class="steps">
+      <div class="step reveal"><div><h3>Build the mental model</h3><p>Understand namespaces, queues, topics, subscriptions, and settlement flow.</p></div></div>
+      <div class="step reveal"><div><h3>Choose the right tier</h3><p>Map workload requirements to Basic, Standard, or Premium.</p></div></div>
+      <div class="step reveal"><div><h3>Deploy with confidence</h3><p>Create resources from Portal, then automate with CLI and Bicep.</p></div></div>
+      <div class="step reveal"><div><h3>Implement producers and consumers</h3><p>Choose .NET, Java, JavaScript/TypeScript, or Python and build the complete order workflow.</p></div></div>
+      <div class="step reveal"><div><h3>Harden for production</h3><p>Apply sessions, DLQ operations, RBAC, diagnostics, and alerts.</p></div></div>
+    </div>
+
+    <div class="section-head" id="modules">
+      <span class="kicker">Workshop modules</span>
+      <h2>Service Bus learning path</h2>
+      <p>Each module follows the same structure: concise theory, architecture visuals, implementation guidance, and practical checkpoints.</p>
+    </div>
+
+    <div class="card-grid">
+      <a class="topic-card reveal" style="--accent:#0078d4" href="introduction.html"><span class="tag">Start</span><h3>1. Introduction</h3><p>Core messaging patterns, resource model, and message lifecycle.</p><span class="more">Open module -></span></a>
+      <a class="topic-card reveal" style="--accent:#d83b01" href="architecture-design.html"><h3>2. Architecture Design</h3><p>Compare Azure messaging technologies and select the right communication model.</p><span class="more">Open module -></span></a>
+      <a class="topic-card reveal" style="--accent:#107c10" href="skus-and-tiers.html"><h3>3. SKUs and Tiers</h3><p>Feature and cost guidance for Basic, Standard, and Premium.</p><span class="more">Open module -></span></a>
+      <a class="topic-card reveal" style="--accent:#ff8c00" href="deploy-portal.html"><h3>4. Deploy via Portal</h3><p>Create namespace, entities, and validate runtime access paths.</p><span class="more">Open module -></span></a>
+      <a class="topic-card reveal" style="--accent:#8e44ad" href="deploy-cli-bicep.html"><h3>5. Deploy with CLI and Bicep</h3><p>Repeatable infrastructure provisioning and environment consistency.</p><span class="more">Open module -></span></a>
+      <a class="topic-card reveal" style="--accent:#0078d4" href="queues.html"><h3>6. Working with Queues</h3><p>Implement producer/consumer code, settlement, retries, and idempotency.</p><span class="more">Open module -></span></a>
+      <a class="topic-card reveal" style="--accent:#107c10" href="topics-subscriptions.html"><h3>7. Topics and Subscriptions</h3><p>Publish/subscribe design with filters and independent consumers.</p><span class="more">Open module -></span></a>
+      <a class="topic-card reveal" style="--accent:#ff8c00" href="advanced-features.html"><h3>8. Advanced Features</h3><p>Sessions, deferral, duplicate detection, scheduling, and DLQ re-drive.</p><span class="more">Open module -></span></a>
+      <a class="topic-card reveal" style="--accent:#d83b01" href="security-monitoring.html"><h3>9. Security and Monitoring</h3><p>Managed identity, RBAC, private endpoints, diagnostics, and alerts.</p><span class="more">Open module -></span></a>
+      <a class="topic-card reveal" style="--accent:#0078d4" href="administration.html"><h3>10. Administration and Operations</h3><p>Inspect runtime health, govern entities, diagnose backlogs, and recover failed messages.</p><span class="more">Open module -></span></a>
+      <a class="topic-card reveal" style="--accent:#8e44ad" href="summary.html"><span class="tag">Finish</span><h3>11. Summary</h3><p>Consolidate outcomes, cleanup resources, and define next capabilities.</p><span class="more">Open module -></span></a>
+    </div>
+
+    <div class="section-head">
+      <span class="kicker">Assets</span>
+      <h2>What this workshop includes</h2>
+      <p>Shared Service Bus modules, a deployable Bicep topology, five labs for each supported Azure SDK language, Azure architecture icons, and starter/complete .NET projects.</p>
+    </div>
+
+    <div class="section-head" id="languages">
+      <span class="kicker">Language paths</span>
+      <h2>Pick your implementation lane</h2>
+      <p>Each first-party Azure SDK path includes deployment, queue producer/consumer, topic filtering, sessions and DLQ recovery, plus a Function-to-Logic-App integration lab.</p>
+    </div>
+
+    <div class="lang-grid">
+      <a class="lang-card reveal" style="--lang:#512bd4" href="languages/dotnet.html">
+        <span class="lang-badge">NET</span>
+        <span class="lang-meta"><strong>.NET</strong><span>C# with Azure.Messaging.ServiceBus</span></span>
+      </a>
+      <a class="lang-card reveal" style="--lang:#e76f00" href="languages/java.html">
+        <span class="lang-badge">JV</span>
+        <span class="lang-meta"><strong>Java</strong><span>Azure SDK with a JMS extension path</span></span>
+      </a>
+      <a class="lang-card reveal" style="--lang:#107c10" href="languages/javascript.html">
+        <span class="lang-badge">JS</span>
+        <span class="lang-meta"><strong>JavaScript / TypeScript</strong><span>Node.js async clients and Functions</span></span>
+      </a>
+      <a class="lang-card reveal" style="--lang:#1f77b4" href="languages/python.html">
+        <span class="lang-badge">PY</span>
+        <span class="lang-meta"><strong>Python</strong><span>Async clients and Python Functions</span></span>
+      </a>
+    </div>
+    <div class="callout"><strong>Other languages:</strong> Service Bus uses AMQP 1.0, so C/C++, Go, Ruby, and other AMQP 1.0 clients can interoperate. These are protocol paths rather than fully supported first-party Azure Service Bus SDK paths.</div>
+  </div>
+
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab 2: Topic Fan-out - JavaScript Labs</title>
+  <script>(function(){var t=localStorage.getItem("sb-runtime-theme");document.documentElement.setAttribute("data-theme",(t==="light"||t==="dark")?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));})();</script>
+  <link rel="icon" type="image/svg+xml" href="../../images/azure/10836-icon-service-Azure-Service-Bus.svg" />
+  <link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body data-root="../.." data-active="javascript">
+  <div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="../../index.html">Home</a><span class="sep">/</span><a href="../javascript.html">JavaScript labs</a><span class="sep">/</span><span>Lab 2</span></nav>
+    <header class="hero"><h1>Lab 2 - Publish one event to two subscribers</h1><p class="subtitle">Create a topic, build a Node.js publisher, and run one reusable subscriber for two independent subscriptions.</p><div class="badge-row"><span class="badge">60 minutes</span><span class="badge">Three processes</span><span class="badge">Topics</span></div></header>
+    <div class="layout">
+      <main class="content">
+        <section id="case-study" class="section-card reveal">
+          <h2>Case study: notify inventory and customer care</h2>
+          <p>When checkout confirms an order, inventory must reserve stock and customer care must prepare a confirmation. The publisher sends one <code>OrderCreated</code> event. Service Bus copies it into two durable subscriptions so both business capabilities receive the event independently.</p>
+<pre class="mermaid">flowchart LR
+  P[Order publisher] -- one message --&gt; T[order-events topic]
+  T -- copy --&gt; I[inventory subscription]
+  T -- copy --&gt; C[customer-care subscription]
+  I -- receive --&gt; SI[Subscriber instance: inventory]
+  C -- receive --&gt; SC[Subscriber instance: customer-care]</pre>
+          <div class="callout"><strong>Important:</strong> Run each receiver against a different subscription. Two receivers using the same subscription are competing consumers and would split messages instead of both receiving a copy.</div>
+        </section>
+
+        <section id="provision" class="section-card reveal">
+          <h2>1. Provision the topic and subscriptions</h2>
+          <p>Reuse the namespace from Lab 1.</p>
+          <h3>Option A: Azure portal</h3>
+          <ol>
+            <li>In the Azure portal, open the Service Bus namespace you created in Lab 1.</li>
+            <li>Under <strong>Entities</strong>, select <strong>Topics</strong>, then select <strong>+ Topic</strong>.</li>
+            <li>Set the topic name to <code>order-events</code>, keep the other defaults, and select <strong>Create</strong>.</li>
+            <li>Open the <code>order-events</code> topic, select <strong>Subscriptions</strong>, then select <strong>+ Subscription</strong>.</li>
+            <li>Set the subscription name to <code>inventory</code>, keep the other defaults, and select <strong>Create</strong>.</li>
+            <li>Select <strong>+ Subscription</strong> again, create a subscription named <code>customer-care</code>, and keep the other defaults.</li>
+            <li>On the namespace <strong>Overview</strong> page, copy the hostname ending in <code>.servicebus.windows.net</code> and set it as <code>SERVICEBUS_FQNS</code> in every terminal used by this lab.</li>
+          </ol>
+          <h3>Option B: Azure CLI</h3>
+          <p>Reuse the PowerShell variables from Lab 1.</p>
+<pre class="code" data-lang="powershell">az servicebus topic create --resource-group $resourceGroup --namespace-name $namespace --name order-events
+az servicebus topic subscription create --resource-group $resourceGroup --namespace-name $namespace --topic-name order-events --name inventory
+az servicebus topic subscription create --resource-group $resourceGroup --namespace-name $namespace --topic-name order-events --name customer-care
+$env:SERVICEBUS_FQNS = "$namespace.servicebus.windows.net"</pre>
+          <div class="callout"><strong>Note:</strong> Complete either Option A or Option B, not both.</div>
+          <p><strong>Checkpoint:</strong> The portal shows one topic and two subscriptions, each with an active message count of zero.</p>
+        </section>
+
+        <section id="projects" class="section-card reveal">
+          <h2>2. Create publisher and subscriber applications</h2>
+<pre class="code" data-lang="powershell">mkdir lab2-topic
+cd lab2-topic
+mkdir orders-publisher, events-subscriber
+
+foreach ($app in @("orders-publisher", "events-subscriber")) {
+  Push-Location $app
+  npm init -y
+  npm pkg set type=module
+  npm install @azure/service-bus @azure/identity
+  Pop-Location
+}</pre>
+          <p>The subscriber accepts a subscription name as a command-line argument, so the same application can run as two independent business consumers.</p>
+        </section>
+
+        <section id="publisher" class="section-card reveal">
+          <h2>3. Build the order publisher</h2>
+          <p>Create <code>orders-publisher/index.js</code>:</p>
+<pre class="code" data-lang="javascript">import { ServiceBusClient } from "@azure/service-bus";
+import { DefaultAzureCredential } from "@azure/identity";
+
+const fqns = process.env.SERVICEBUS_FQNS;
+if (!fqns) throw new Error("Set SERVICEBUS_FQNS first.");
+
+const client = new ServiceBusClient(fqns, new DefaultAzureCredential());
+const sender = client.createSender("order-events");
+const orderId = `ORD-${new Date().toISOString().replaceAll(/\D/g, "").slice(8, 14)}`;
+
+try {
+  await sender.sendMessages({
+    body: { orderId, product: "AZ-BOOK", quantity: 2 },
+    messageId: orderId,
+    subject: "OrderCreated",
+    contentType: "application/json"
+  });
+  console.log(`Published one event for ${orderId}`);
+} finally {
+  await sender.close();
+  await client.close();
+}</pre>
+        </section>
+
+        <section id="subscriber" class="section-card reveal">
+          <h2>4. Build the reusable subscriber</h2>
+          <p>Create <code>events-subscriber/index.js</code>:</p>
+<pre class="code" data-lang="javascript">import { ServiceBusClient } from "@azure/service-bus";
+import { DefaultAzureCredential } from "@azure/identity";
+
+const subscriptionName = process.argv[2];
+if (!["inventory", "customer-care"].includes(subscriptionName)) {
+  throw new Error("Pass inventory or customer-care.");
+}
+
+const fqns = process.env.SERVICEBUS_FQNS;
+if (!fqns) throw new Error("Set SERVICEBUS_FQNS first.");
+
+const client = new ServiceBusClient(fqns, new DefaultAzureCredential());
+const receiver = client.createReceiver("order-events", subscriptionName, { receiveMode: "peekLock" });
+
+receiver.subscribe({
+  processMessage: async message =&gt; {
+    console.log(`[${subscriptionName}] received ${message.messageId}:`, message.body);
+    await receiver.completeMessage(message);
+  },
+  processError: async args =&gt; console.error(`[${subscriptionName}]`, args.error)
+}, { autoCompleteMessages: false });
+
+console.log(`Listening on ${subscriptionName}. Press Ctrl+C to stop.`);
+process.on("SIGINT", async () =&gt; {
+  await receiver.close();
+  await client.close();
+  process.exit(0);
+});</pre>
+        </section>
+
+        <section id="run" class="section-card reveal">
+          <h2>5. Run three processes and verify fan-out</h2>
+<pre class="code" data-lang="powershell"># Terminal 1
+node .\events-subscriber\index.js inventory
+
+# Terminal 2
+node .\events-subscriber\index.js customer-care
+
+# Terminal 3
+node .\orders-publisher\index.js</pre>
+          <p><strong>Expected result:</strong> The publisher reports one sent event. Both subscriber terminals display the same <code>MessageId</code> and body. Each subscription's active message count returns to zero.</p>
+          <p><strong>Challenge:</strong> Stop only the customer-care process and publish another event. Inventory processes it immediately while the customer-care subscription retains its own copy. Restart customer-care and observe it receive the stored event.</p>
+        </section>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-1.html"><small>Previous</small><strong>&lt;- Lab 1</strong></a><a class="next" href="lab-3.html"><small>Next</small><strong>Lab 3 -&gt;</strong></a></nav>
+      </main>
+      <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#projects">2. Create apps</a><a href="#publisher">3. Publisher</a><a href="#subscriber">4. Subscriber</a><a href="#run">5. Run and verify</a></aside>
+    </div>
+  </div>
+  <script type="module" src="../../assets/site.js"></script>
+</body>
+</html>
