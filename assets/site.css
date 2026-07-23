@@ -1080,6 +1080,7 @@ td:first-child, th:first-child { min-width: 160px; }
 }
 .lang-card {
   display: flex; align-items: center; gap: 13px;
+  min-width: 0;
   padding: 16px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
@@ -1096,8 +1097,15 @@ td:first-child, th:first-child { min-width: 160px; }
   background: linear-gradient(135deg, var(--lang, var(--azure-blue)), color-mix(in srgb, var(--lang, var(--azure-blue)) 60%, #ffffff));
   box-shadow: 0 8px 18px color-mix(in srgb, var(--lang, var(--azure-blue)) 40%, transparent);
 }
+.lang-card .lang-meta { min-width: 0; }
 .lang-card .lang-meta strong { display: block; color: var(--text-primary); font-size: 1rem; }
-.lang-card .lang-meta span { font-size: 0.82rem; color: var(--text-secondary); }
+.lang-card .lang-meta span {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 
 /* Workshop "agenda" / steps */
 .steps { display: grid; gap: 12px; counter-reset: step; }

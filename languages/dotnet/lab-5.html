@@ -280,7 +280,7 @@ az eventgrid event-subscription list `
         <li>Open <strong>Configure run after</strong> for the complete action and leave only <strong>is successful</strong> selected for the table write. A failed storage operation must not complete the message.</li>
         <li>Select <strong>Save</strong>. The designer should show no invalid parameters or disconnected actions.</li>
       </ol>
-      <div class="callout"><strong>Checkpoint:</strong> The successful path is Event Grid trigger -> initialize <code>queueEmpty</code> -> Until -> peek-lock batch receive -> For each -> decode and parse -> V2 table upsert -> complete. The empty receive path sets <code>queueEmpty</code> to <code>true</code> and exits the loop.</div>
+      <div class="callout"><strong>Checkpoint:</strong> The successful path is Event Grid trigger &rarr; initialize <code>queueEmpty</code> &rarr; Until &rarr; peek-lock batch receive &rarr; For each &rarr; decode and parse &rarr; V2 table upsert &rarr; complete. The empty receive path sets <code>queueEmpty</code> to <code>true</code> and exits the loop.</div>
           <h3 id="load-test">4. Run the load test</h3>
 <pre class="code" data-lang="javascript">import http from 'k6/http';
 import { check } from 'k6';
@@ -301,7 +301,7 @@ export default function () {
           <p>Samples follow the current <a href="https://learn.microsoft.com/dotnet/api/overview/azure/service-bus">Azure Service Bus SDK for .NET</a>, <a href="https://learn.microsoft.com/azure/azure-functions/functions-bindings-service-bus">Service Bus bindings for Azure Functions</a>, and <a href="https://learn.microsoft.com/azure/service-bus-messaging/service-bus-to-event-grid-integration-example">Service Bus to Event Grid integration</a>. Check NuGet for the current stable package version when you begin the lab.</p>
 <pre class="code" data-lang="bash">az group delete --name rg-sb-workshop --yes --no-wait</pre>
         </section>
-        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-4.html"><small>Previous</small><strong>&lt;- Lab 4</strong></a><a class="next" href="../java.html"><small>Next</small><strong>Java labs -&gt;</strong></a></nav>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-4.html"><small>Previous</small><strong>← Lab 4</strong></a><a class="next" href="../java.html"><small>Next</small><strong>Java labs →</strong></a></nav>
       </main>
       <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#provision">1. Provision</a><a href="#function-producer">2. Function producer</a><a href="#cloud-flow">3. Cloud consumer</a><a href="#load-test">4. Load test</a><a href="#observe">5. Verify</a><a href="#references">Cleanup</a></aside>
     </div>

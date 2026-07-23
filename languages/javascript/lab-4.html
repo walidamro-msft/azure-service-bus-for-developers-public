@@ -152,7 +152,7 @@ node .\order-validator\index.js</pre>
           <p><strong>Expected result:</strong> The DLQ count rises to one after validation, then returns to zero after recovery. The final validator run completes <code>ORD-RECOVERED</code>, and the active queue count returns to zero.</p>
           <p><strong>Challenge:</strong> Change the recovery policy so unknown dead-letter reasons are abandoned for investigation rather than automatically re-driven.</p>
         </section>
-        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-3.html"><small>Previous</small><strong>&lt;- Lab 3</strong></a><a class="next" href="lab-5.html"><small>Next</small><strong>Lab 5 -&gt;</strong></a></nav>
+        <nav class="pager" aria-label="Lab pagination"><a class="prev" href="lab-3.html"><small>Previous</small><strong>← Lab 3</strong></a><a class="next" href="lab-5.html"><small>Next</small><strong>Lab 5 →</strong></a></nav>
       </main>
       <aside class="toc" aria-label="Table of contents"><h3>On This Page</h3><a href="#case-study">Case study</a><a href="#projects">1. Create apps</a><a href="#poison">2. Send invalid order</a><a href="#validator">3. Dead-letter</a><a href="#recover">4. Recover</a><a href="#run">5. Run and verify</a></aside>
     </div>

@@ -184,6 +184,7 @@ function buildFooter() {
         <a href="${url("index.html#languages")}">Language labs</a>
         <a href="${url("topics-subscriptions.html")}">Topics</a>
         <a href="${url("trainer/index.html")}">Trainer Hub</a>
+        <a href="${url("license.html")}">License</a>
         <a href="https://learn.microsoft.com/azure/service-bus-messaging/" target="_blank" rel="noopener">Microsoft Learn &#8599;</a>
       </span>
     </div>`;
